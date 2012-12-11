@@ -146,6 +146,7 @@ class Flowizer(object):
     def __call__(self, data, usesyns = True):
         from numpy import array,abs
         from dataset import Variable,Dataset
+        variables = dict((k,Variable(k))for k in ('time','src','sport','dst','dport'))
 
         paylen =  Variable('paylen')
         flags =  Variable('flags')
@@ -184,12 +185,13 @@ class Flowizer(object):
                 #elif tr not in hashes:
                 print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(tr, self.bflow),hr)
                 continue
-            fpred = reduce(conj, (Variable(f)==x[f] for f in self.fflow))
-            bpred = reduce(conj, (Variable(self.bflow[i])==x[self.fflow[i]] for i in range(len(self.fflow))))
+            fpred = reduce(conj, (variables[f]==x[f] for f in self.fflow))
+            bpred = reduce(conj, (variables[self.bflow[i]]==x[self.fflow[i]] for i in range(len(self.fflow))))
             upd = pay.set_fields((fpred | bpred), 'flow', h)
             rev = [ pay.set_fields(bpred, i, negative) for i in ('paylen','size') if i in pay ]
-            p = pay.select(fpred, fields=('packets',)).sum()  if 'packets' in pay else upd
-            pr = pay.select(bpred, fields=('packets',)).sum() if 'packets' in pay else rev[0]
+            p,pr = upd,rev[0]
+            #p = pay.select(fpred, fields=('packets',)).sum()  if 'packets' in pay else upd
+            #pr = pay.select(bpred, fields=('packets',)).sum() if 'packets' in pay else rev[0]
             if upd>0:
                 print '%s (hash: %d), packets: %d, reversed: %d, progess: \033[33;1m%d\033[0m of \033[33;1m%d\033[0m' % (Flowizer._quad2str(t, self.fflow), h, p, pr, l, len(syns) )
                 hashes[h] = t
