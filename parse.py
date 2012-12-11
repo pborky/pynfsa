@@ -186,7 +186,7 @@ class Flowizer(object):
             fpred = reduce(conj, (Variable(f)==x[f] for f in self.fflow))
             bpred = reduce(conj, (Variable(self.bflow[i])==x[self.fflow[i]] for i in range(len(self.fflow))))
             upd = pay.set_fields((fpred | bpred), 'flow', h)
-            rev = [ pay.set_fields(bpred, i, negative) for i in ('paylen','size','packets') if i in pay ]
+            rev = [ pay.set_fields(bpred, i, negative) for i in ('paylen','size') if i in pay ]
             p = pay.select(fpred, fields=('packets',)).sum()  if 'packets' in pay else upd
             pr = pay.select(bpred, fields=('packets',)).sum() if 'packets' in pay else rev[0]
             if upd>0:
