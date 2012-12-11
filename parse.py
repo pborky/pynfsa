@@ -164,6 +164,7 @@ class Flowizer(object):
         scalar = lambda x : x.item() if  hasattr(x,'item') else x
         conj = lambda x,y: x&y
         negative = lambda x: -abs(x)
+        l = 1
         for x in syns:
             t = tuple(scalar(x[f]) for f in self.fflow)
             h = hash(t)
@@ -190,10 +191,11 @@ class Flowizer(object):
             p = pay.select(fpred, fields=('packets',)).sum()  if 'packets' in pay else upd
             pr = pay.select(bpred, fields=('packets',)).sum() if 'packets' in pay else rev[0]
             if upd>0:
-                print '%s (hash: %d), packets: %d, reversed: %d' % (Flowizer._quad2str(t, self.fflow), h, p, pr )
+                print '%s (hash: %d), packets: %d, reversed: %d, progess: \033[33;1m%d\033[0m of \033[33;1m%d\033[0m' % (Flowizer._quad2str(t, self.fflow), h, p, pr, l, len(syns) )
                 hashes[h] = t
             else:
                 print '****** no data in %s (hash: %d)' % (Flowizer._quad2str(t, self.fflow), h )
+            l += 1
         pay.retain_fields(self.fields)
         qd = Dataset(data=array(tuple((j,)+k for j,k in hashes.items())),fields=('flow',)+self.fflow)
         return  qd, pay
