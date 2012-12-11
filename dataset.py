@@ -36,9 +36,21 @@ class Dataset(object):
     def __len__(self):
         """return the length of the dataset."""
         return self.data.shape[0]
+    def __getitem__(self, key):
+        return self.select(None,fields=(key,))
+    def __delitem__(self, key):
+        self.retain_fields(tuple(f for f in self.fields if f!=key))
+    def __setitem__(self,key, value):
+        return self.set_fields(None, key, value)
+    def __contains__(self,item):
+        return item in self.fields
+    def __iter__(self):
+        def iterator():
+            for d in self.data:
+                yield dict((self.fields[i],d[i]) for i in range(len(self.fields)))
+        return iterator()
     def _getfield(self,x,f):
         """return vector containing the field"""
-        print self.fields, f
         return x[...,self.fields.index(f)]
     def select(self, predicate, order=None, group= None, retdset=None, fields=None, **kwargs):
         """Select submatrix based on predicate and fields.
@@ -56,7 +68,10 @@ class Dataset(object):
                 # select submatrix containing time and size columns and rows where size is in interval [10,15)
         """
         from numpy import argsort
-        result =  self.data[predicate (self.data, self._getfield),...]
+        if callable(predicate):
+            result =  self.data[predicate (self.data, self._getfield),...]
+        else:
+            result =  self.data[:]
         if order and order in self.fields:
             result=result[argsort(self._getfield(result,order)),...]
         if group:
@@ -173,7 +188,7 @@ class Xor(Binary):
 class Equ(Binary):
     def reduction(self,x,y): return x==y
 
-class PredicateFactory(object):
+class Variable(object):
     """Used to build and predicate instance."""
     def __init__(self, field):
         self.field = field

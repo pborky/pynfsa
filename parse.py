@@ -134,57 +134,63 @@ class Flowizer(object):
         self.fflow = fflow
         self.bflow = bflow
     @staticmethod
-    def submatrix(x, fields, _getfield):
-        try:
-            return tuple(_getfield(x, f).item() for f in fields)
-        except Exception:
-            return tuple(_getfield(x, f) for f in fields)
-    @staticmethod
-    def pred(t, flow, _getfield):
-        from dataset import PredicateFactory
-        #return (PredicateFactory('time')>=t[-1]) & reduce (lambda x,y: x&y, (PredicateFactory(flow[i])==t[i] for i in range(len(t)-1)))
-        return lambda x,y: x&y, (PredicateFactory(flow[i])==t[i] for i in range(len(t)-1))
-    @staticmethod
-    def _quad2str(q, flow):
-        if 'src' not in flow or 'dst' not in flow:
+    def _quad2str(d, fields):
+        if 'src' not in fields or 'dst' not in fields:
             raise ValueError('items "src" and "dst" are expected to identify flow')
-        x = [ ((q[flow.index(s)]) if s in flow else '*') for s in ('src','sport','dst','dport') ]
-        reverse = flow.index('src') > flow.index('dst')
+        x = [ ((d[fields.index(s)]) if s in fields else '*') for s in ('src','sport','dst','dport') ]
+        reverse = fields.index('src') > fields.index('dst')
         for i in (0,2):
             if x[i] != '*':
                 x[i] = Extractor.int2ip(x[i])
-        return ('\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m' if not reverse else '\033[32m%s\033[0m:\033[33m%s\033[0m < \033[32m%s\033[0m:\033[33m%s\033[0m') % tuple(x)
-    def __call__(self, data):
+        return '\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m' % tuple(x)
+    def __call__(self, data, usesyns = True):
         from numpy import array,abs
-        from dataset import PredicateFactory,Dataset
+        from dataset import Variable,Dataset
 
-        paylen =  PredicateFactory('paylen')
-        flags =  PredicateFactory('flags')
-        proto =  PredicateFactory('proto')
+        paylen =  Variable('paylen')
+        flags =  Variable('flags')
+        proto =  Variable('proto')
 
-        syns = data.select(((flags&18)==2) & (proto==6),order='time') # syn packets
-        if 'paylen' in data.fields:
-            pay = Dataset(data=data.select((paylen>0) & (proto==6),order='time'),fields=data.fields) # payload packets
+        if usesyns:
+            syns = data.select(((flags&18)==2) & (proto==6),order='time',retdset=True) # syn packets
         else:
-            pay = Dataset(data=data.select((proto==6),order='time'),fields=data.fields) # payload packets
+            #syns = data.select((proto==6),order='time',retdset=True) # all records
+            syns = data.select(((flags&2)==2) & (proto==6),order='time',retdset=True) # all records
+        if 'paylen' in data.fields:
+            pay = data.select((paylen>0) & (proto==6),order='time',retdset=True)
+        else:
+            pay = data.select((proto==6),order='time',retdset=True)
         hashes = {}
+        scalar = lambda x : x.item() if  hasattr(x,'item') else x
+        conj = lambda x,y: x&y
+        negative = lambda x: -abs(x)
         for x in syns:
-            t = Flowizer.submatrix(x, self.fflow, pay._getfield)
-            tm = Flowizer.submatrix(x, ('time',), pay._getfield)
+            t = tuple(scalar(x[f]) for f in self.fflow)
             h = hash(t)
             if h in hashes:
                 if hashes[h] != t:
                     print '****** collision in %s (hash: %d)' %(Flowizer._quad2str(t, self.fflow),h)
                     continue
-                elif Flowizer.submatrix(x, self.bflow, pay._getfield) not in hashes:
-                    print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(t, self.fflow),h)
+                #elif tr not in hashes:
+                print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(t, self.fflow),h)
+                continue
+            tr = tuple(scalar(x[f]) for f in self.bflow)
+            hr = hash(tr)
+            if hr in hashes:
+                if hashes[hr] != tr:
+                    print '****** collision in %s (hash: %d)' %(Flowizer._quad2str(tr, self.bflow),hr)
                     continue
-            fpred = Flowizer.pred(t+tm, self.fflow, pay._getfield)
-            bpred = Flowizer.pred(t+tm, self.bflow, pay._getfield)
+                #elif tr not in hashes:
+                print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(tr, self.bflow),hr)
+                continue
+            fpred = reduce(conj, (Variable(f)==x[f] for f in self.fflow))
+            bpred = reduce(conj, (Variable(self.bflow[i])==x[self.fflow[i]] for i in range(len(self.fflow))))
             upd = pay.set_fields((fpred | bpred), 'flow', h)
-            p = [ pay.set_fields(bpred, i, lambda x: -abs(x)) for i in ('paylen','size','packets') if i in pay.fields ]
+            rev = [ pay.set_fields(bpred, i, negative) for i in ('paylen','size','packets') if i in pay ]
+            p = pay.select(fpred, fields=('packets',)).sum()  if 'packets' in pay else upd
+            pr = pay.select(bpred, fields=('packets',)).sum() if 'packets' in pay else rev[0]
             if upd>0:
-                print '%s (hash: %d), packets: %d' % (Flowizer._quad2str(t, self.fflow), h, upd )
+                print '%s (hash: %d), packets: %d, reversed: %d' % (Flowizer._quad2str(t, self.fflow), h, p, pr )
                 hashes[h] = t
             else:
                 print '****** no data in %s (hash: %d)' % (Flowizer._quad2str(t, self.fflow), h )
@@ -230,9 +236,9 @@ class Sampler(object):
 
     def __call__(self, flows, flow=None, epochs = None):
         import numpy as np
-        from dataset import PredicateFactory
+        from dataset import Variable
 
-        time = PredicateFactory('time')
+        time = Variable('time')
 
         print '## Sampling data: epoch=%dsec, srate=%dHz, slice=(%dsec,%dsec)' %\
                 (self.epochsize*1e-6, self.srate, self.slice[0]*1e-6,self.slice[1]*1e-6)

@@ -5,9 +5,9 @@ def psd(w, bounds):
     """auto-correlation of packet process"""
     from scipy.signal import  correlate
     from scipy.fftpack import rfft
-    from dataset import PredicateFactory
+    from dataset import Variable
     import numpy as np
-    paylen =  PredicateFactory('paylen')
+    paylen =  Variable('paylen')
     allpkts = w.select(paylen.always(),fields=('time',))[np.newaxis,...]
     # packet process
     amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...])).sum(1)
@@ -17,9 +17,9 @@ def xsd1(w, bounds):
     """cross-correlation of in-/out-bound packet process"""
     from scipy.signal import  correlate
     from scipy.fftpack import rfft
-    from dataset import PredicateFactory
+    from dataset import Variable
     import numpy as np
-    paylen =  PredicateFactory('paylen')
+    paylen =  Variable('paylen')
     inbound = w.select(paylen<0,fields=('time',))[np.newaxis,...]
     outbound = w.select(paylen>=0,fields=('time',))[np.newaxis,...]
     # in-/out-bound packet process
@@ -32,9 +32,9 @@ def xsd2(w, bounds):
     """cross-correlation of in-/out-bound packet volume"""
     from scipy.signal import  correlate
     from scipy.fftpack import rfft
-    from dataset import PredicateFactory
+    from dataset import Variable
     import numpy as np
-    paylen =  PredicateFactory('paylen')
+    paylen =  Variable('paylen')
     inbound = w.select(paylen<0,fields=('time','paylen'))[np.newaxis,...]
     outbound = w.select(paylen>=0,fields=('time','paylen'))[np.newaxis,...]
     imask = (inbound[...,0] >= bounds[:-1,...]) & (inbound[...,0] < bounds[1:,...])
@@ -84,7 +84,7 @@ if __name__=='__main__':
         from parse import FlowExtractor
         from os.path import isfile,basename
         h5 = File(argv[2],'a')
-        fl = h5.require_group('flows')
+        fl = h5.require_group('netflows')
         extractf = FlowExtractor( ('time', 'duration','src','sport','dst','dport','proto', 'packets', 'size','flags', 'flows', 'flow') )
         for fn in argv[3:]:
             if isfile(fn) and basename(fn) not in fl.keys():
@@ -109,8 +109,8 @@ if __name__=='__main__':
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
-        elif 'flows' in h5:
-            tr = h5['flows']
+        elif 'netflows' in h5:
+            tr = h5['netflows']
         else:
             raise Exception('missing traces or flows')
         data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
@@ -118,9 +118,10 @@ if __name__=='__main__':
         print '## Extracting flows using triple'
         if 'paylen' in data.fields:
             flowize3 = Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport'))  # group flow using triple
-        else:
+            q,f = flowize3(data)
+        elif 'size' in data.fields and 'packets' in data.fields:
             flowize3 = Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport'))  # group flow using triple
-        q,f = flowize3(data)
+            q,f = flowize3(data,usesyns=False)
         fl = h5.require_group('flows3')
 
         for i in ('flowdata','flowfields','flowid','flowidfields'):
@@ -155,7 +156,7 @@ if __name__=='__main__':
         fl.create_dataset('flowidfields',data = q.fields,compression='gzip')
 
     elif argv[1] == 'samples':
-        from dataset import PredicateFactory
+        from dataset import Variable
         from scipy.signal import  correlate
         from scipy.fftpack import fftfreq,rfft
         from sys import stdout
@@ -167,8 +168,8 @@ if __name__=='__main__':
             speriod = 1./ srate # sampling period in seconds
             wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
 
-            flow =  PredicateFactory('flow')
-            time =  PredicateFactory('time')
+            flow =  Variable('flow')
+            time =  Variable('time')
 
             h5 = File(argv[2],'a')
 
@@ -294,8 +295,8 @@ if __name__=='__main__':
 
     elif argv[1] == 'model':
         def get_sampl(i):
-            from dataset import PredicateFactory
-            dport =  PredicateFactory('dport')
+            from dataset import Variable
+            dport =  Variable('dport')
             h5 = File(argv[2],'a')
             try:
                 sampl = h5.require_group('samples_%d'%i)
@@ -467,7 +468,7 @@ if __name__=='__main__':
                 return lambda ax: ax.plot(x, y, '-')
                 #fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
     elif argv[1] == 'feature':
-        from dataset import PredicateFactory,Dataset
+        from dataset import Variable,Dataset
         from scipy.fftpack import fftfreq,rfft
         from sys import stdout
 
