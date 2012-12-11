@@ -106,6 +106,7 @@ if __name__=='__main__':
                 if '.fields' not in fl:
                     fl.create_dataset('.fields', data = data.fields)
     elif argv[1] == 'flows3':
+        from util import timedrun
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
@@ -117,10 +118,10 @@ if __name__=='__main__':
         ## extract flows
         print '## Extracting flows using triple'
         if 'paylen' in data.fields:
-            flowize3 = Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport'))  # group flow using triple
+            flowize3 = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
             q,f = flowize3(data)
         elif 'size' in data.fields and 'packets' in data.fields:
-            flowize3 = Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport'))  # group flow using triple
+            flowize3 = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
             q,f = flowize3(data,usesyns=False)
         fl = h5.require_group('flows3')
 

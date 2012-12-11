@@ -88,12 +88,15 @@ def timedrun(fnc):
     class TimedRun(object):
         def __init__(self, fnc):
             self.fnc = fnc
+        def _get_name(self):
+            if hasattr(self.fnc,'__name__'):
+                return self.fnc.__name__
         def __call__(self, *args, **kwargs):
             from datetime import datetime
-            print '## function <%s>: started' % self.fnc.__name__
+            print '## function <%s>: started' % self._get_name()
             start = datetime.now()
             result = self.fnc.__call__(*args,**kwargs)
-            print '## function <%s>: elapsed time: %f' % (self.fnc.__name__ ,(datetime.now() - start).total_seconds())
+            print '## function <%s>: elapsed time: %f' % (self._get_name() ,(datetime.now() - start).total_seconds())
             return result
     return TimedRun(fnc)
 
