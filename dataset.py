@@ -47,7 +47,7 @@ class Dataset(object):
     def __iter__(self):
         def iterator():
             for d in self.data:
-                yield dict((self.fields[i],d[i]) for i in range(len(self.fields)))
+                yield Dataset(data=d,fields=self.fields)
         return iterator()
     def _getfield(self,x,f):
         """return vector containing the field"""

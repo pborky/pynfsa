@@ -117,12 +117,13 @@ if __name__=='__main__':
         data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
         ## extract flows
         print '## Extracting flows using triple'
-        if 'paylen' in data.fields:
+        if 'paylen' in data:
             flowize3 = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-            q,f = flowize3(data)
-        elif 'size' in data.fields and 'packets' in data.fields:
+        elif 'size' in data and 'packets' in data:
             flowize3 = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-            q,f = flowize3(data,usesyns=False)
+        else:
+            raise Exception('dataset not usable')
+        q,f = flowize3(data)
         fl = h5.require_group('flows3')
 
         for i in ('flowdata','flowfields','flowid','flowidfields'):

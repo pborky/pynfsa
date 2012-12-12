@@ -146,6 +146,7 @@ class Flowizer(object):
     def __call__(self, data, usesyns = True):
         from numpy import array,abs
         from dataset import Variable,Dataset
+        from sys import stdout
         variables = dict((k,Variable(k))for k in ('src','sport','dst','dport'))
 
         paylen =  Variable('paylen')
@@ -153,50 +154,52 @@ class Flowizer(object):
         proto =  Variable('proto')
         time =  Variable('time')
 
-        if usesyns:
-            syns = data.select(((flags&18)==2) & (proto==6),order='time',retdset=True) # syn packets
-        else:
-            #syns = data.select((proto==6),order='time',retdset=True) # all records
-            syns = data.select(((flags&2)==2) & (proto==6),order='time',retdset=True) # syn packets
         if 'paylen' in data.fields:
             pay = data.select((paylen>0) & (proto==6),order='time',retdset=True)
         else:
             pay = data.select((proto==6),order='time',retdset=True)
         hashes = {}
         scalar = lambda x : x.item() if  hasattr(x,'item') else x
-        conj = lambda x,y: x&y
-        negative = lambda x: -abs(x)
-        l = 1
-        for x in syns:
+        negate = lambda x: -abs(x)
+        l = 0
+        dropped = 0
+        negative = False
+        for x in pay:
             t = tuple(scalar(x[f]) for f in self.fflow)
             h = hash(t)
-            if h in hashes:
-                if hashes[h] != t:
-                    print '****** collision in %s (hash: %d)' %(Flowizer._quad2str(t, self.fflow),h)
-                    continue
-                #elif tr not in hashes:
-                print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(t, self.fflow),h)
-                continue
             tr = tuple(scalar(x[f]) for f in self.bflow)
             hr = hash(tr)
-            if hr in hashes:
-                if hashes[hr] != tr:
-                    print '****** collision in %s (hash: %d)' %(Flowizer._quad2str(tr, self.bflow),hr)
+            if h in hashes:
+                if hashes[h] != t:
+                    stdout.write('\r****** collision in %s (hash: %d)\n' %(Flowizer._quad2str(t, self.fflow),h))
+                    stdout.flush()
+                    dropped += 1
                     continue
-                #elif tr not in hashes:
-                print '###### already processed %s (hash: %d)' %(Flowizer._quad2str(tr, self.bflow),hr)
-                continue
-            fpred = reduce(conj, (variables[f]==x[f] for f in self.fflow)) & (time>=x['time'])
-            bpred = reduce(conj, (variables[self.bflow[i]]==x[self.fflow[i]] for i in range(len(self.fflow))))   & (time>=x['time'])
-            upd = pay.set_fields((fpred | bpred), 'flow', h)
-            if upd>5:
-                rev = [ pay.set_fields(bpred, i, negative) for i in ('paylen','size') if i in pay ]
-                p,pr = upd,rev[0]
-                print '%s (hash: %d), packets: %d, reversed: %d, progess: \033[33;1m%d\033[0m of \033[33;1m%d\033[0m' % (Flowizer._quad2str(t, self.fflow), h, p, pr, l, len(syns) )
+            elif hr in hashes:
+                if hashes[hr] != tr:
+                    stdout.write( '\r****** collision in %s (hash: %d)\n' %(Flowizer._quad2str(tr, self.bflow),hr))
+                    stdout.flush()
+                    dropped += 1
+                    continue
+                negative = True
             else:
-                print '****** low data in %s (hash: %d)' % (Flowizer._quad2str(t, self.fflow), h )
+                if usesyns and x['flags']&2 == 0:  # no syn flag
+                    stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (Flowizer._quad2str(tr, self.bflow),hr))
+                    stdout.flush()
+                    dropped += 1
+                    continue
+            x['flow'] = h
+            if negative:
+                for i in ('paylen','size'):
+                    if i in x:
+                        x[i] = negate # broadcasting lambda
             hashes[h] = t
             l += 1
+            if l%1000 == 0 :
+                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m)        ' % (100.*l/len(pay), dropped)  )
+                stdout.flush()
+        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m)        \n' % dropped)
+        stdout.flush()
         pay.retain_fields(self.fields)
         qd = Dataset(data=array(tuple((j,)+k for j,k in hashes.items())),fields=('flow',)+self.fflow)
         return  qd, pay
