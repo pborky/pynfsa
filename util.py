@@ -104,11 +104,8 @@ def reverseDns(ip):
     """ execute dig to reverse lookup of given address
     """
     try:
-        import subprocess
-        dig = subprocess.Popen(['/usr/bin/dig', '+noall', '+answer', '-x', ip], stderr=subprocess.STDOUT,stdout = subprocess.PIPE )
-        out, err = dig.communicate()
-        if "PTR" in out:
-            return out[out.index("PTR"):].split()[1]
+        import socket
+        return socket.gethostbyaddr(ip)[0]
     except:
-        return ''
+        pass
 

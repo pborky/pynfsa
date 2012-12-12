@@ -8,9 +8,15 @@ def psd(w, bounds):
     from dataset import Variable
     import numpy as np
     paylen =  Variable('paylen')
-    allpkts = w.select(paylen.always(),fields=('time',))[np.newaxis,...]
-    # packet process
-    amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...])).sum(1)
+    allpkts = w['time'][np.newaxis,...]
+    amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
+    if 'packets' in w:
+        packets = w['packets'][np.newaxis,...]
+        #amp = (((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))*packets).sum(1)
+        amp = (amp*packets[...,0]).sum(1)
+    else:
+        #amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...])).sum(1)
+        amp = (amp).sum(1)
     # power spectral density
     return amp,rfft(correlate(amp,amp,mode='same'))
 def xsd1(w, bounds):
@@ -163,7 +169,9 @@ if __name__=='__main__':
         from scipy.fftpack import fftfreq,rfft
         from sys import stdout
 
-        for srate in (100,200,500,1000,2000):
+        srate = float(argv[3])
+        if srate>0:
+        #for srate in (100,200,500,1000,2000):
             #srate = 100 # sample rate in Hz
             wndsize = 250 # 10k samples/wnd
 
@@ -194,22 +202,19 @@ if __name__=='__main__':
             ips = {}
 
             # some colorful sugar
+            scalar = lambda x: x.item() if hasattr(x,'item') else x
             ipfmt = lambda i: '%s:* > %s:%d [%s]' % (Extractor.int2ip(i[1]),Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
             ipfmt2 = lambda i: '%s:%d [%s]' % (Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
             ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (Extractor.int2ip(i[1]),Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
-
-            chooseflows = 20
-            flid = np.array([(1.*i.shape[0]/(i[...,0].max()-i[...,0].min()),i.shape[0]) for i in (flows3.data[flows3.data[...,2]==f,...]  for f in id3.data[...,0])])
-            flid = id3.data[list(reversed(np.argsort(flid[...,1]))),...]
-            print '\n'.join(ipfmtc(i) for i in flid[:])
-            #print '\n'.join(ipfmtc(i) for i in flid[:chooseflows,...])
 
             stdout.write('\n')
             stdout.flush()
 
             #for f in flid[:chooseflows,0]:
-            for f in flid[...,0]:
-                ip = tuple(id3.data[id3.data[...,0]==f,...].squeeze())
+            for id3row in id3:
+                f = scalar(id3row['flow'])
+
+                ip = tuple(scalar(id3row[i]) for i in ('flow', 'src','dst','dport'))
                 ips[f] = ipfmt(ip)
 
                 stdout.write('\033[36mprocessing flow\033[0m: %s   '%ipfmtc(ip))
@@ -218,7 +223,7 @@ if __name__=='__main__':
                 # select related packets
                 #fl =  flows[(flows[...,2] == f ),...]
                 fl =  flows3.select(flow==f,retdset=True)
-                tm = fl.select(time.always(), fields=('time',))
+                tm = fl['time']
                 mi = tm.min()
                 ma = tm.max()
 
@@ -236,10 +241,13 @@ if __name__=='__main__':
                         stdout.flush()
 
                     #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
-                    w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
+                    if 'paylen' in fl:
+                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
+                    else:
+                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets'))
 
                     if not len(w)>0:
-                        unused += len(w)
+                        unused += np.sum(w['packets']) if 'packets' in w else len(w)
                         k += wndspan
                         i += 1
                         continue
@@ -250,7 +258,7 @@ if __name__=='__main__':
                     amp,xsd = psd(w,bounds)
 
                     if not xsd.any():
-                        unused += len(w)
+                        unused += np.sum(w['packets']) if 'packets' in w else len(w)
                         k += wndspan
                         i += 1
                         continue
@@ -262,11 +270,13 @@ if __name__=='__main__':
                     k += wndspan
                     i += 1
 
+                pkts = np.sum(fl['packets']) if 'packets' in fl else len(fl)
+
                 if  len(amplitude):
                     if unused:
-                        stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,len(fl)))
+                        stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
                     else:
-                        stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),len(fl)))
+                        stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
                     stdout.flush()
                     amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
                     spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
@@ -274,7 +284,7 @@ if __name__=='__main__':
                     spectrums[f] = spectrum
                     wids[f] = np.array(wid)
                 else:
-                    stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),len(fl)))
+                    stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
                     stdout.flush()
 
             flows = list(spectrums.keys())

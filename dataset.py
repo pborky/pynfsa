@@ -72,14 +72,16 @@ class Dataset(object):
             result =  self.data[predicate (self.data, self._getfield),...]
         else:
             result =  self.data[:]
-        if order and order in self.fields:
+        fld = self.fields
+        if order and order in fld:
             result=result[argsort(self._getfield(result,order)),...]
         if group:
             print '###### grouping is not implemented'
         if fields:
-            result = result[...,tuple(self.fields.index(f) for f in fields)]
+            result = result[...,tuple(fld.index(f) for f in fields)]
+            fld = fields
         if retdset:
-            return Dataset(data=result,fields=self.fields)
+            return Dataset(data=result,fields=fld)
         else:
             return result
     def add_field(self,field, value):
