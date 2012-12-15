@@ -190,12 +190,13 @@ class Flowizer(object):
                         syn = scalar(x['flags'])&18 == 2
                     if not syn:
                         stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),hr))
+                        stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, l)  )
                         stdout.flush()
                         dropped += 1
                         droppedips.add((scalar(x['dst']),scalar(x['dport'])))
                         continue
                 stdout.write( '\r###### new flow %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),hr))
-                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*l/len(pay), dropped, l)  )
+                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, l)  )
                 stdout.flush()
                 hashes[h] = t
             x['flow'] = h
@@ -205,9 +206,9 @@ class Flowizer(object):
                         x[i] = negate # broadcasting lambda
             l += 1
             if l%1000 == 0 :
-                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*l/len(pay), dropped, l)  )
+                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, l)  )
                 stdout.flush()
-        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        \n' % (dropped,l))
+        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        \n' % (dropped,(l+dropped)))
         stdout.write( '\n%s\n'% [(Extractor.int2ip(d),pd) for d,pd in droppedips])
         stdout.flush()
         if 'paylen' in pay:
