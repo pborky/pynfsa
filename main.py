@@ -160,16 +160,35 @@ if __name__=='__main__':
             tr = h5['netflows']
         else:
             raise Exception('missing traces or flows')
-        data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
-        ## extract flows
-        print '## Extracting flows using triple'
-        if 'paylen' in data:
+
+        def process(data,flowize,id):
+            print '## Extracting flows using triple'
+            q,f = flowize(data)
+            fl = h5.require_group('flows3')
+            for i in ('flowdata%s'%id,'flowfields'):
+                if i in fl:
+                    del fl[i]
+            print '## Storing matrices in %s...' % argv[2]
+            fl.create_dataset('flowdata%s'%id,data = f.data,compression='gzip')
+            fl.create_dataset('flowfields',data = f.fields,compression='gzip')
+            return q,f
+
+        if 'paylen' in tuple(tr['.fields']):
             flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-        elif 'size' in data and 'packets' in data:
+        elif 'size' in tuple(tr['.fields']) and 'packets' in tuple(tr['.fields']):
             flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
         else:
             raise Exception('dataset not usable')
-        q,f = flowize(data)
+
+        try:
+            data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
+            q,f = process(data,flowize,'')
+        except MemoryError:
+            for k in sorted(tr.keys()):
+                if k!='.fields':
+                    data = Dataset(data=tr[k][:],fields=tuple(tr['.fields']))
+                    q,f = process(data,flowize,'_%s'%k)
+
         fl = h5.require_group('flows3')
 
         for i in ('flowdata','flowfields','flowid','flowidfields'):
@@ -177,10 +196,7 @@ if __name__=='__main__':
                 del fl[i]
 
         print '## Storing matrices in %s...' % argv[2]
-        fl.create_dataset('flowdata',data = f.data,compression='gzip')
         fl.create_dataset('flowid',data = q.data,compression='gzip')
-        print '## Storing fields in %s...' % argv[2]
-        fl.create_dataset('flowfields',data = f.fields,compression='gzip')
         fl.create_dataset('flowidfields',data = q.fields,compression='gzip')
 
     elif argv[1] == 'flows4':
@@ -581,10 +597,13 @@ if __name__=='__main__':
         sport = Variable('sport')
 
         h5 = File(argv[2],'a')
-        for grp in (k for k in h5.keys() if k.startswith('samples_')):
+
+        if len(argv)>3:
+        #for grp in (k for k in h5.keys() if k.startswith('samples_')):
         #for i in (100,200,500,1000,2000):
-            if grp not in h5:
-                continue
+            grp = argv[3]
+            #if grp not in h5:
+            #    exit() # continue
 
             sampl = h5[grp]
 
