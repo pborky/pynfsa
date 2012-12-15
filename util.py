@@ -25,9 +25,11 @@ def fig(plt_fnc, name=None, show=True):
     else:
         l = len(plt_fnc)
         result = []
-        subimgs = np.ceil(np.sqrt(l))
+        #subimgs = np.ceil(np.sqrt(l))
+        rows = 3
+        cols = np.ceil(l/3.)
         for i in range(l):
-            a = fig.add_subplot(subimgs,subimgs,1+i)
+            a = fig.add_subplot(rows,cols,1+i)
             result += plt_fnc[i](a),
             if name and len(name) > i: a.set_title(name[i])
         result = tuple(result)
@@ -109,3 +111,5 @@ def reverseDns(ip):
     except:
         pass
 
+def scalar(x):
+    return x.item() if hasattr(x,'item') else x

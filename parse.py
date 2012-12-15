@@ -154,21 +154,19 @@ class Flowizer(object):
         proto =  Variable('proto')
         time =  Variable('time')
 
-        if 'paylen' in data.fields:
-            pay = data.select((paylen>0) & (proto==6),order='time',retdset=True)
-        else:
-            pay = data.select((proto==6),order='time',retdset=True)
+        pay = data.select((proto==6),order='time',retdset=True)
         hashes = {}
         scalar = lambda x : x.item() if  hasattr(x,'item') else x
         negate = lambda x: -abs(x)
         l = 0
         dropped = 0
-        negative = False
+        droppedips = set()
         for x in pay:
             t = tuple(scalar(x[f]) for f in self.fflow)
             h = hash(t)
             tr = tuple(scalar(x[f]) for f in self.bflow)
             hr = hash(tr)
+            negative = False
             if h in hashes:
                 if hashes[h] != t:
                     stdout.write('\r****** collision in %s (hash: %d)\n' %(Flowizer._quad2str(t, self.fflow),h))
@@ -183,24 +181,37 @@ class Flowizer(object):
                     continue
                 negative = True
             else:
-                if usesyns and x['flags']&2 == 0:  # no syn flag
-                    stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (Flowizer._quad2str(tr, self.bflow),hr))
-                    stdout.flush()
-                    dropped += 1
-                    continue
+                #print scalar(x['flags'])&18
+                if usesyns:
+                    if 'packets' in pay:  # we deal with netflow data and thus we demand SYN
+                        syn = scalar(x['flags'])&2 == 2
+                    else: # we deal with pcap data, so SYN packet is distinguishable
+                        # we don`t care about SYN+ACK
+                        syn = scalar(x['flags'])&18 == 2
+                    if not syn:
+                        stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),hr))
+                        stdout.flush()
+                        dropped += 1
+                        droppedips.add((scalar(x['dst']),scalar(x['dport'])))
+                        continue
+                stdout.write( '\r###### new flow %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),hr))
+                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*l/len(pay), dropped, l)  )
+                stdout.flush()
+                hashes[h] = t
             x['flow'] = h
             if negative:
                 for i in ('paylen','size'):
                     if i in x:
                         x[i] = negate # broadcasting lambda
-            hashes[h] = t
             l += 1
             if l%1000 == 0 :
-                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m)        ' % (100.*l/len(pay), dropped)  )
+                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*l/len(pay), dropped, l)  )
                 stdout.flush()
-        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m)        \n' % dropped)
+        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        \n' % (dropped,l))
+        stdout.write( '\n%s\n'% [(Extractor.int2ip(d),pd) for d,pd in droppedips])
         stdout.flush()
-        pay.retain_fields(self.fields)
+        if 'paylen' in pay:
+            pay = pay.select((paylen!=0),order=('time',),retdset=True, fields=self.fields)
         qd = Dataset(data=array(tuple((j,)+k for j,k in hashes.items())),fields=('flow',)+self.fflow)
         return  qd, pay
 

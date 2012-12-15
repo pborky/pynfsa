@@ -50,6 +50,46 @@ def xsd2(w, bounds):
     # cross spectral density
     return amp,rfft(correlate(abs(amp[1]),abs(amp[0]),mode='same'))
 
+def get_labeling(id3):
+    from dataset import Variable
+    import json
+    from itertools import product
+    from util import scalar
+
+    flow = Variable('flow')
+    src = Variable('src')
+    dst = Variable('dst')
+    dport = Variable('dport')
+    sport = Variable('sport')
+
+    # some heuristics
+    f = open('flows/filters.json')
+    filters = json.load(f)
+    labeling2 = {}
+    labeling = {}
+    i = 2
+    for f in filters:
+        if f['type'] not in labeling2:
+            labeling2[f['type']] = i if f['type'] != 'FILTER_LEGITIMATE' else 1
+            i+=1
+        a = labeling2[f['type']]
+        if f['dstIPs'] and f['dstPorts'] and f['srcIPs']:
+            for d,dp,s in product(f['dstIPs'],f['dstPorts'],f['srcIPs']):
+                for r in id3.select((src==Extractor.ip2int(s))&(dst==Extractor.ip2int(d))&(dport==dp),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['dstIPs'] and f['dstPorts']:
+            for d,dp in product(f['dstIPs'],f['dstPorts']):
+                for r in id3.select((dst==Extractor.ip2int(d))&(dport==dp),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['dstIPs']:
+            for d in f['dstIPs']:
+                for r in id3.select((dst==Extractor.ip2int(d)),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['srcIPs']:
+            for d in f['srcIPs']:
+                for r in id3.select((src==Extractor.ip2int(d)),fields=('flow',)):
+                    labeling[scalar(r)] = a
+    return labeling,dict( (v,k) for k,v in labeling2.items() )
 if __name__=='__main__':
     from  sys import argv
     from parse import Flowizer,Extractor
@@ -124,12 +164,12 @@ if __name__=='__main__':
         ## extract flows
         print '## Extracting flows using triple'
         if 'paylen' in data:
-            flowize3 = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
+            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
         elif 'size' in data and 'packets' in data:
-            flowize3 = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
+            flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
         else:
             raise Exception('dataset not usable')
-        q,f = flowize3(data)
+        q,f = flowize(data)
         fl = h5.require_group('flows3')
 
         for i in ('flowdata','flowfields','flowid','flowidfields'):
@@ -144,12 +184,24 @@ if __name__=='__main__':
         fl.create_dataset('flowidfields',data = q.fields,compression='gzip')
 
     elif argv[1] == 'flows4':
+        from util import timedrun
         h5 = File(argv[2],'a')
-        tr = h5.require_group('traces')
+        if 'traces' in h5:
+            tr = h5['traces']
+        elif 'netflows' in h5:
+            tr = h5['netflows']
+        else:
+            raise Exception('missing traces or flows')
         data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
         ## extract flows
         print '## Extracting flows using quad'
-        q,f = flowize4(data)
+        if 'paylen' in data:
+            flowize = timedrun(Flowizer(fflow=('src', 'sport','dst','dport'),bflow=('dst', 'dport','src','sport')))  # group flow using triple
+        elif 'size' in data and 'packets' in data:
+            flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src', 'sport','dst','dport'),bflow=('dst', 'dport','src','sport')))  # group flow using triple
+        else:
+            raise Exception('dataset not usable')
+        q,f = flowize(data)
         fl = h5.require_group('flows4')
 
         for i in ('flowdata','flowfields','flowid','flowidfields'):
@@ -169,11 +221,13 @@ if __name__=='__main__':
         from scipy.fftpack import fftfreq,rfft
         from sys import stdout
 
-        srate = float(argv[3])
-        if srate>0:
+        for arg in argv[4:]:
         #for srate in (100,200,500,1000,2000):
-            #srate = 100 # sample rate in Hz
-            wndsize = 250 # 10k samples/wnd
+            srate = float(arg)
+            if srate<=0:
+                continue
+
+            wndsize = 200
 
             speriod = 1./ srate # sampling period in seconds
             wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
@@ -183,9 +237,14 @@ if __name__=='__main__':
 
             h5 = File(argv[2],'a')
 
-            fl3 =  h5.require_group('flows3')
-            fl4 =  h5.require_group('flows4')
-            sampl = h5.require_group('samples_%d'%srate)
+            if argv[3] in h5:
+                fl3 = h5[argv[3]]
+            elif 'flows3' in h5:
+                fl3 = h5['flows3']
+            else:
+                raise Exception('flows3 or %s not found'%argv[3])
+
+            sampl = h5.require_group('samples_%f'%srate)
 
             if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
                 raise Exception('already processed for different srate and wndsize')
@@ -210,15 +269,28 @@ if __name__=='__main__':
             stdout.write('\n')
             stdout.flush()
 
+            flows = {}
+            for f in flows3['flow']:
+                f = scalar(f)
+                if f not in flows:
+                    flows[f] = 0
+                else:
+                    flows[f] += 1
+            flows = dict((k,v) for k,v in flows.items() if v>100)
+
+            l = 1
             #for f in flid[:chooseflows,0]:
             for id3row in id3:
                 f = scalar(id3row['flow'])
+                if f not in flows:
+                    continue
 
                 ip = tuple(scalar(id3row[i]) for i in ('flow', 'src','dst','dport'))
                 ips[f] = ipfmt(ip)
 
-                stdout.write('\033[36mprocessing flow\033[0m: %s   '%ipfmtc(ip))
+                stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, \033[36mprocessing flow\033[0m: %s  '%(100.*l/len(flows),srate,ipfmtc(ip)))
                 stdout.flush()
+                l += 1
 
                 # select related packets
                 #fl =  flows[(flows[...,2] == f ),...]
@@ -273,19 +345,22 @@ if __name__=='__main__':
                 pkts = np.sum(fl['packets']) if 'packets' in fl else len(fl)
 
                 if  len(amplitude):
-                    if unused:
-                        stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
-                    else:
-                        stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
-                    stdout.flush()
                     amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
                     spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
                     amplitudes[f] = amplitude
                     spectrums[f] = spectrum
                     wids[f] = np.array(wid)
+                    if unused:
+                        stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
+                    else:
+                        stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
                 else:
                     stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
-                    stdout.flush()
+                stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz   '%(100.*l/len(flows),srate))
+                stdout.flush()
+
+            stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz    '% srate)
+            stdout.flush()
 
             flows = list(spectrums.keys())
 
@@ -306,37 +381,39 @@ if __name__=='__main__':
             sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
 
     elif argv[1] == 'model':
+        h5 = File(argv[2],'a')
         def get_sampl(i):
             from dataset import Variable
             dport =  Variable('dport')
-            h5 = File(argv[2],'a')
-            try:
-                sampl = h5.require_group('samples_%d'%i)
+            sampl = h5[i]
 
-                srate = sampl['.srate'].value
-                wndsize = sampl['.wndsize'].value
+            srate = sampl['.srate'].value
+            wndsize = sampl['.wndsize'].value
 
-                X = sampl['X'].value
-                y = sampl['y'].value
-                freqs = sampl['freqs'].value
+            X = sampl['X'].value
+            y = sampl['y'].value
+            freqs = sampl['freqs'].value
 
-                id3 = Dataset(data=sampl['id'].value,fields=sampl['idfields'].value)
+            id3 = Dataset(data=sampl['id'].value,fields=sampl['idfields'].value)
 
-                web = (id3.select((dport==80)|(dport==443), fields=('flow',))).squeeze().tolist()
-                ssh = (id3.select((dport==22), fields=('flow',))).squeeze().tolist()
-                web.remove(4776559292263195127)
-                vpn = [4776559292263195127]
-                rtmp = [8380189417275335324]
-                # some heuristics
-                labeling2 = {2:'ssh',4:'vpn',1:'web',3:'rtmp', None: 'unknown'}
-                #labeling = dict((i,k) for k,v in {2 : [-552256902917098113,2247007671922456841],4:[4776559292263195127],1:[8380160408752905696,8380189416172033921,8410733012134650723,-469218773793942506,-2499874899238919737,-5041250675964824658,8580894899495251662,-4947266290287076305,-6617676552486822384,3553172765770232670,4958930730188020726,8698986197344828920,-2289429955555002898,-7120599107837071846,-8123220270916674052,3968969310196917918],3:[8380189417275335324]}.items() for i in v)
-                labeling = dict((i,k) for k,v in {2 :ssh,4:vpn,1:web, 3:rtmp}.items() for i in v)
+            #web = (id3.select((dport==80)|(dport==443), fields=('flow',))).squeeze().tolist()
+            #ssh = (id3.select((dport==22), fields=('flow',))).squeeze().tolist()
+            #web.remove(4776559292263195127)
+            #vpn = [4776559292263195127]
+            #rtmp = [8380189417275335324]
+            # some heuristics
 
-                labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
+            labeling,labeling2 = get_labeling(id3)
 
-                return X,np.array([[labeling.get(f) for f in y.squeeze()]]),freqs
-            finally:
-                h5.close()
+            print labeling2
+
+            #labeling2 = {2:'ssh',4:'vpn',1:'web',3:'rtmp', None: 'unknown'}
+            #labeling = dict((i,k) for k,v in {2 : [-552256902917098113,2247007671922456841],4:[4776559292263195127],1:[8380160408752905696,8380189416172033921,8410733012134650723,-469218773793942506,-2499874899238919737,-5041250675964824658,8580894899495251662,-4947266290287076305,-6617676552486822384,3553172765770232670,4958930730188020726,8698986197344828920,-2289429955555002898,-7120599107837071846,-8123220270916674052,3968969310196917918],3:[8380189417275335324]}.items() for i in v)
+            #labeling = dict((i,k) for k,v in {2 :ssh,4:vpn,1:web, 3:rtmp}.items() for i in v)
+
+            labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
+
+            return X,np.array([[labeling.get(f) for f in y.squeeze()]]),freqs
 
         class FitError(Exception):
             pass
@@ -387,6 +464,12 @@ if __name__=='__main__':
                 mask = np.hstack((freqs[...,np.newaxis] > self.f_thresh,freqs[...,np.newaxis] <= self.f_thresh))[np.newaxis,...].repeat(n_samples,0)
                 #mask = (((bands[...,:-1]<=freqs[...,np.newaxis]) & (bands[...,1:]>=freqs[...,np.newaxis])))[np.newaxis,...].repeat(n_samples,0)
                 return (Xm * mask).sum(1), y, None
+        class freq_sdev(base):
+            def __init__(self, dummy, **kwargs):
+                base.__init__(self, **kwargs)
+            def _process(self, X, y, freqs):
+                import numpy as np
+                return X.std(1), y, None
         class pca(base):
             def __init__(self, ndim, **kwargs):
                 base.__init__(self, ndim=ndim, **kwargs)
@@ -459,34 +542,51 @@ if __name__=='__main__':
                 except FitError:
                     s+=-np.inf,
             return np.array(s),d
-        methods = {}
-        methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,3,5,10,20,30)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-        methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-        methods.update(iterate( 'pca', ( freq_treshold, (0,))  , ( scale, (True,)) , ( pca, (3,5,7)) ,  ( gmm, (1,) ) ))
-        for srate in (200,500,1000):
-            print 'srate=%dHz'%srate
-            X, y, freqs = get_sampl(srate)
-            f = []
-            n = []
-            scores = []
-            for p,meth in methods.items():
-                s,d = crossval(meth, X, y, freqs)
-                name = '\t%s: score (mean=%f, std=%f)' % (','.join('%s(%d)'%n for n in p), s.mean(), s.std())
-                f += d[0],
-                n += name,
-                scores += s,
-                print name
-            def plotline(x,y):
-                return lambda ax: ax.plot(x, y, '-')
-                #fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
+        try:
+            methods = {}
+            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,3,5,10,20,30)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'pca', ( freq_treshold, (0,)) ,  ( pca, (3,5,7)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            for k in (k for k in h5.keys() if k.startswith('samples_')):
+            #for srate in (0.0033,):#(200,500,1000):
+                srate= float(k.split('_')[1])
+                print 'srate=%fHz'%srate
+                X, y, freqs = get_sampl(k)
+                f = []
+                n = []
+                scores = []
+                for p,meth in methods.items():
+                    s,d = crossval(meth, X, y, freqs)
+                    name = '\t%s: score (mean=%f, std=%f)' % (','.join('%s(%d)'%n for n in p), s.mean(), s.std())
+                    f += d[0],
+                    n += 'srate=%f, %s' % (srate,'%s(%d)' % p[1]),
+                    scores += s,
+                    print name
+                def plotline(x,y):
+                    return lambda ax: ax.plot(x, y, '-')
+                fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
+        finally:
+            h5.close()
     elif argv[1] == 'feature':
         from dataset import Variable,Dataset
         from scipy.fftpack import fftfreq,rfft
         from sys import stdout
+        from util import scatter,scalar
+
+        flow = Variable('flow')
+        src = Variable('src')
+        dst = Variable('dst')
+        dport = Variable('dport')
+        sport = Variable('sport')
 
         h5 = File(argv[2],'a')
-        for i in (100,200,500,1000,2000):
-            sampl = h5.require_group('samples_%d'%i)
+        for grp in (k for k in h5.keys() if k.startswith('samples_')):
+        #for i in (100,200,500,1000,2000):
+            if grp not in h5:
+                continue
+
+            sampl = h5[grp]
 
             srate = sampl['.srate'].value
             wndsize = sampl['.wndsize'].value
@@ -496,18 +596,14 @@ if __name__=='__main__':
             freqs = sampl['freqs'].value
 
             id3 = Dataset(data=sampl['id'].value,fields=sampl['idfields'].value)
-
-            # some heuristics
-            labeling2 = {2:'ssh',1:'vpn',0:'web',3:'rtmp', None: 'unknown'}
-            labeling = dict((i,k) for k,v in {2 : [-552256902917098113,2247007671922456841],1:[4776559292263195127],0:[8380160408752905696,8380189416172033921,8410733012134650723,-469218773793942506,-2499874899238919737,-5041250675964824658,8580894899495251662,-4947266290287076305,-6617676552486822384,3553172765770232670,4958930730188020726,8698986197344828920,-2289429955555002898,-7120599107837071846,-8123220270916674052,3968969310196917918],3:[8380189417275335324]}.items() for i in v)
-
+            labeling,labeling2 = get_labeling(id3)
             labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
 
             def pcatransform(ndim=2):
                 from sklearn.decomposition import PCA
                 t = PCA(ndim)
                 def fnc(X):
-                    t.fit(X)
+                    t.fit(X[labels.squeeze().nonzero()[0],...])
                     return t.transform(X)
                 return fnc
             def lowhitransform(srate, wndsize, fthresh=50):
@@ -519,6 +615,8 @@ if __name__=='__main__':
             def logistnorm(X):
                 from scipy.special import expit
                 return expit(varnorm(X))
+            def scatter1(ax):
+                return scatter(ax, X, labels, varnorm, pcatransform(ndim=2), labeling2.get)
             def scatter1a(ax):
                 return scatter(ax, X, labels, varnorm, pcatransform(ndim=2), labeling2.get)
             def scatter1b(ax):
@@ -530,6 +628,6 @@ if __name__=='__main__':
                 #fignames =  'spectral features (srate=%dHz, wnd=%ds), %%s, %%s' %(srate,wndsize/srate)
             #fignames = [fignames%('variance normalization','2D pca projection'),fignames%('logistic normalization','2D pca projection')]
             #fig([scatter1a,scatter1b], fignames,show=True)
-            fignames =  'spectral features (srate=%dHz, wnd=%fs), %%s, %%s' %(srate,1.*wndsize/srate)
-            fignames = [fignames%('no normalization','low-pass/hi-pass energy'),fignames%('variance normalization','low-pass/hi-pass energy')]
-            fig([scatter2a,scatter2b], fignames,show=True)
+            #fignames =  'spectral features (srate=%dHz, wnd=%fs), %%s, %%s' %(srate,1.*wndsize/srate)
+            #fignames = [fignames%('no normalization','low-pass/hi-pass energy'),fignames%('variance normalization','low-pass/hi-pass energy')]
+            fig(scatter1,show=True)
