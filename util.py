@@ -19,12 +19,26 @@ def get_packets(fn,extractor):
 
 
     class PacketWrapper(object):
+        @classmethod
+        def decode(cls,data):
+            from impacket.ImpactDecoder import LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder
+            if not hasattr(cls,'decoders'):
+                cls.decoders = [LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder]
+            i = len(cls.decoders)
+            while True:
+                try:
+                    decoder = cls.decoders[0]()
+                    return decoder.decode(data)
+                except:
+                    i -= 1
+                    if not i: raise
+                    d = cls.decoders.pop(0)
+                    cls.decoders.append(d)
         def __init__(self, pktlen, data, timestamp):
-            from impacket.ImpactDecoder import LinuxSLLDecoder as Decoder
             from impacket.ImpactPacket import PacketBuffer
             self.pktlen = pktlen
             self.timestamp = timestamp
-            self.decoded = data if isinstance(data,PacketBuffer) else Decoder().decode(data)
+            self.decoded = data if isinstance(data,PacketBuffer) else PacketWrapper.decode(data)
         def __contains__(self, item):
             if isinstance(item,object):
                 p = self

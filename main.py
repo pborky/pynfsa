@@ -7,7 +7,6 @@ def psd(w, bounds):
     from scipy.fftpack import fft
     from dataset import Variable
     import numpy as np
-    paylen =  Variable('paylen')
     allpkts = w['time'][np.newaxis,...]
     amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
     if 'packets' in w:
@@ -23,9 +22,7 @@ def csd(w, bounds):
     """auto-correlation of packet process"""
     from scipy.signal import  correlate
     from scipy.fftpack import fft
-    from dataset import Variable
     import numpy as np
-    if len(w)>100: raise Exception()
     size =  'size' if 'size' in w else 'paylen'
     allpkts = w['time'][np.newaxis,...][...,w[size][...,0] >= 0,...]
     ampout = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
@@ -40,7 +37,7 @@ def csd(w, bounds):
         ampout = ampout.sum(1)
         ampin = ampin.sum(1)
     # power spectral density
-    return np.vstack((ampout,ampin)),np.abs(fft(correlate(ampin,ampout,mode='same')))
+    return np.vstack((ampout,ampin)),np.abs(fft(correlate(ampout,ampin,mode='same')))
 def xsd1(w, bounds):
     """cross-correlation of in-/out-bound packet process"""
     from scipy.signal import  correlate
@@ -422,23 +419,23 @@ if __name__=='__main__':
             stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz    '% srate)
             stdout.flush()
 
-            flows = list(spectrums.keys())
+            if len(spectrums):
+                flows = list(spectrums.keys())
 
-            X = np.vstack(spectrums[f] for f in flows) # spectrums
-            #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
-            y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
-            #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
+                X = np.vstack(spectrums[f] for f in flows) # spectrums
+                #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
+                y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
+                #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
 
-            sampl.create_dataset('.srate',data=srate)
-            sampl.create_dataset('.wndsize',data=wndsize)
+                sampl.create_dataset('.srate',data=srate)
+                sampl.create_dataset('.wndsize',data=wndsize)
 
-            sampl.create_dataset('X',data=X)
-            #sampl.create_dataset('A',data=ampl)
-            sampl.create_dataset('y',data=y)
-            #sampl.create_dataset('wnds',data=wnds)
-            sampl.create_dataset('id',data=id3.data)
-            sampl.create_dataset('idfields',data=id3.fields)
-            sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
+                sampl.create_dataset('X',data=X)
+                sampl.create_dataset('y',data=y)
+                #sampl.create_dataset('A',data=ampl)
+                #sampl.create_dataset('wnds',data=wnds)
+                id3.save(sampl.require_group('flowids'))
+                sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
 
     elif argv[1] == 'model':
         h5 = File(argv[2],'a')
