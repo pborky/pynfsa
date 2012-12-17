@@ -79,7 +79,8 @@ def get_packets(fn,extractor):
         try:
             p.dispatch(-1,cb)
         except Exception as e:
-            print e
+            #print e
+            pass
     def opengzip(fn,cb):
         from tempfile import NamedTemporaryFile
         from gzip import GzipFile
