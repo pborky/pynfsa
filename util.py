@@ -48,7 +48,11 @@ def get_packets(fn,extractor):
         def child(self):
             return self.decoded
     def cb(ppktlen, data, timestamp):
-        pkt = PacketWrapper(ppktlen, data, timestamp)
+        try:
+            pkt = PacketWrapper(ppktlen, data, timestamp)
+        except Exception as e:
+            print e
+            return
         e = extractor(pkt)
         if e is not None:
             result.append(e)
