@@ -114,6 +114,23 @@ def get_labeling(id3):
                 for r in id3.select((src==ip2int(d)),fields=('flow',)):
                     labeling[scalar(r)] = a
     return labeling,dict( (v,k) for k,v in labeling2.items() )
+def get_pcap(pcapfns, callback, keys=()):
+    from parse import PcapExtractor
+    from os.path import isfile,basename
+    from util import get_packets
+    extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
+    for fn in pcapfns:
+        if isfile(fn) and basename(fn) not in keys:
+            print '## Getting %s...' % fn
+            ## load file
+            pkts = get_packets(fn,extract)
+            print '\t%d packets captured'%len(pkts)
+            #print '## Exctracting features...'
+            ## convert to matrix
+            data = Dataset(pkts, extract.fields)
+            print '\t%d packets extracted, %d packets discarded'% (data.data.shape[0],len(pkts)-data.data.shape[0])
+            del pkts
+            callback(data,basename(fn))
 
 if __name__=='__main__':
     from util import ip2int,int2ip,reverseDns,fig
@@ -187,25 +204,29 @@ if __name__=='__main__':
     elif argv[1] == 'flows3':
         from util import timedrun
         from parse import Flowizer
+
+        def process(data,flowize,id):
+            print '## Extracting flows using triple'
+            fl = h5.require_group('flows3')
+            q,f = flowize(data, Dataset(h5=fl['flowid'])) if 'flowid' in fl else flowize(data)
+            for i in ('data%s'%id,'flowid'):
+                if i in fl:
+                    del fl[i]
+            print '## Storing matrices in %s...' % argv[2]
+            f.save(fl.require_group('data%s'%id))
+            q.save(fl.require_group('flowid'))
+
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
         elif 'netflows' in h5:
             tr = h5['netflows']
         else:
-            raise Exception('missing traces or flows')
-
-        def process(data,flowize,id):
-            print '## Extracting flows using triple'
-            q,f = flowize(data)
             fl = h5.require_group('flows3')
-            for i in ('flowdata%s'%id,'flowfields'):
-                if i in fl:
-                    del fl[i]
-            print '## Storing matrices in %s...' % argv[2]
-            fl.create_dataset('flowdata%s'%id,data = f.data,compression='gzip')
-            fl.create_dataset('flowfields',data = f.fields,compression='gzip')
-            return q,f
+            keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
+            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
+            get_pcap(argv[3:],lambda x,fn:process(x,flowize,'_%s'%fn),keys=keys)
+            exit()
 
         if 'paylen' in tuple(tr['.fields']):
             flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
@@ -216,22 +237,12 @@ if __name__=='__main__':
 
         try:
             data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
-            q,f = process(data,flowize,'')
+            process(data,flowize,'')
         except MemoryError:
             for k in sorted(tr.keys()):
                 if k!='.fields':
                     data = Dataset(data=tr[k][:],fields=tuple(tr['.fields']))
-                    q,f = process(data,flowize,'_%s'%k)
-
-        fl = h5.require_group('flows3')
-
-        for i in ('flowdata','flowfields','flowid','flowidfields'):
-            if i in fl:
-                del fl[i]
-
-        print '## Storing matrices in %s...' % argv[2]
-        fl.create_dataset('flowid',data = q.data,compression='gzip')
-        fl.create_dataset('flowidfields',data = q.fields,compression='gzip')
+                    process(data,flowize,'_%s'%k)
 
     elif argv[1] == 'flows4':
         from util import timedrun

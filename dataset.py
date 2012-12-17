@@ -3,15 +3,18 @@ __author__ = 'peterb'
 class Dataset(object):
     """Encapsulation of the numpy array, in order to conviently select/update data.
     """
-    def __init__(self, data, fields):
+    def __init__(self, data=None, fields=None, h5=None):
         """constructor
             Input:
                 data - numpy matrix or list of lists
                 fields - list of column names
         """
-        from numpy import array
-        if data is not None and fields is not None:
-            self.data = array(data)
+        from numpy import array,ndarray
+        if h5 is not None:
+            self.data = h5['data'].value
+            self.fields = tuple(h5['fields'].value)
+        elif data is not None and fields is not None:
+            self.data = data if isinstance(data,ndarray) else array(data)
             self.fields = tuple(fields)
         else:
             raise Exception('no data')
@@ -27,7 +30,10 @@ class Dataset(object):
         """return the length of the dataset."""
         return self.data.shape[0]
     def __getitem__(self, key):
-        return self.select(None,fields=(key,))
+        if isinstance(key, tuple):
+            return self.select(None,fields=key)
+        else:
+            return self.select(None,fields=(key,))
     def __delitem__(self, key):
         self.retain_fields(tuple(f for f in self.fields if f!=key))
     def __setitem__(self,key, value):
@@ -36,8 +42,8 @@ class Dataset(object):
         return item in self.fields
     def __iter__(self):
         def iterator():
-            for d in self.data:
-                yield Dataset(data=d,fields=self.fields)
+            for i in range(len(self)):
+                yield Dataset(data=self.data[i,...],fields=self.fields)
         return iterator()
     def _getfield(self,x,f):
         """return vector containing the field"""
@@ -107,7 +113,9 @@ class Dataset(object):
                 idx =  self.fields.index(field)
                 self.data[pred,idx] = value
         return self.data.shape[0] if predicate is None else pred.sum()
-
+    def save(self,h5):
+        h5.create_dataset('data', data = self.data,compression='gzip')
+        h5.create_dataset('fields', data = self.fields,compression='gzip')
 ## convivence method for compsoting coditions.
 class Predicate(object):
     def __call__(self,arg, fnc):
