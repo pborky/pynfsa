@@ -28,9 +28,9 @@ def get_packets(fn,extractor):
             i = len(cls.decoders) -1
             while True:
                 try:
-                    decoder = cls.decoders[i]()
-                    result = decoder.decode(data)
-                    cls.hits[cls.decoders[i]] += 1
+                    decoder = cls.decoders[i]
+                    result = decoder().decode(data)
+                    cls.hits[decoder] += 1
                     return  result
                 except:
                     i -= 1
@@ -63,11 +63,10 @@ def get_packets(fn,extractor):
         def child(self):
             return self.decoded
     def cb(ppktlen, data, timestamp):
-        from impacket.ImpactPacket import ImpactPacketException
+        #from impacket.ImpactPacket import ImpactPacketException
         try:
             pkt = PacketWrapper(ppktlen, data, timestamp)
-        except ImpactPacketException as ex:
-            print ex
+        except :
             return
         e = extractor(pkt)
         if e is not None:
