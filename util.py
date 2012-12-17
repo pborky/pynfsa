@@ -48,10 +48,11 @@ def get_packets(fn,extractor):
         def child(self):
             return self.decoded
     def cb(ppktlen, data, timestamp):
+        from impacket.ImpactPacket import ImpactPacketException
         try:
             pkt = PacketWrapper(ppktlen, data, timestamp)
-        except Exception as e:
-            print e
+        except ImpactPacketException as ex:
+            print ex
             return
         e = extractor(pkt)
         if e is not None:
