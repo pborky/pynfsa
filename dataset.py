@@ -21,11 +21,11 @@ class Dataset(object):
     def __add__(self,other):
         """add two dataset objects. Must have same shape and fields."""
         from numpy import vstack
-        if isinstance(other,Dataset):
+        if not isinstance(other,Dataset):
             raise TypeError('Must be Dataset')
         if self.fields != other.fields:
             raise TypeError('Must have same fields')
-        return Dataset(data=vstack(self.data,other.data),fields=self.fields)
+        return Dataset(data=vstack((self.data,other.data)),fields=self.fields)
     def __len__(self):
         """return the length of the dataset."""
         return self.data.shape[0]

@@ -170,12 +170,7 @@ if __name__=='__main__':
                 print '\t%d packets extracted, %d packets discarded'% (data.data.shape[0],len(pkts)-data.data.shape[0])
                 del pkts
                 print '## Storing matrix in %s...' % argv[2]
-                tr.create_dataset(basename(fn), data = data.data,compression='gzip')
-                print '## Storing fields in %s...' % argv[2]
-                if '.fields' not in tr:
-                    tr.create_dataset('.fields', data = data.fields)
-                    #del data
-                    #gc.collect()
+                data.save(tr.require_group(basename(fn)))
     if argv[1] == 'netflow':
         from parse import FlowExtractor
         from os.path import isfile,basename
@@ -197,10 +192,7 @@ if __name__=='__main__':
                 print '\t%d flows extracted, %d flows discarded'% (data.data.shape[0],len(flows)-data.data.shape[0])
                 del flows
                 print '## Storing matrix in %s...' % argv[2]
-                fl.create_dataset(basename(fn), data = data.data,compression='gzip')
-                print '## Storing fields in %s...' % argv[2]
-                if '.fields' not in fl:
-                    fl.create_dataset('.fields', data = data.fields)
+                data.save(fl.require_group(basename(fn)))
     elif argv[1] == 'flows3':
         from util import timedrun
         from parse import Flowizer
@@ -219,29 +211,25 @@ if __name__=='__main__':
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
+            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
         elif 'netflows' in h5:
             tr = h5['netflows']
-        else:
-            fl = h5.require_group('flows3')
-            keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
-            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-            get_pcap(argv[3:],lambda x,fn:process(x,flowize,'_%s'%fn),keys=keys)
-            exit()
-
-        if 'paylen' in tuple(tr['.fields']):
-            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-        elif 'size' in tuple(tr['.fields']) and 'packets' in tuple(tr['.fields']):
             flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
         else:
-            raise Exception('dataset not usable')
+            tr = None
+            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
 
-        try:
-            data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
-            process(data,flowize,'')
-        except MemoryError:
-            for k in sorted(tr.keys()):
-                if k!='.fields':
-                    data = Dataset(data=tr[k][:],fields=tuple(tr['.fields']))
+        if not tr:
+            fl = h5.require_group('flows3')
+            keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
+            get_pcap(argv[3:],lambda x,fn:process(x,flowize,'_%s'%fn),keys=keys)
+        else:
+            try:
+                data = reduce(lambda x,y:x+y,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
+                process(data,flowize,'')
+            except MemoryError:
+                for k in sorted(tr.keys()):
+                    data = Dataset(h5=tr[k])
                     process(data,flowize,'_%s'%k)
 
     elif argv[1] == 'flows4':
@@ -318,8 +306,11 @@ if __name__=='__main__':
             if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
                 raise Exception('already processed for different srate and wndsize')
 
-            flows3 = Dataset(data=fl3['flowdata'].value,fields=fl3['flowfields'].value)
-            id3 = Dataset(data=fl3['flowid'].value,fields=fl3['flowidfields'].value)
+            if 'data' in fl3:
+                flows3 = Dataset(h5=fl3['data'])
+            else:
+                flows3 = reduce(lambda x,y:x+y,(Dataset(h5=fl3[k]) for k in fl3.keys() if k.split('_',1)[0] == 'data') )
+            id3 = Dataset(h5=fl3['flowid'])
 
             #flows4 = Dataset(data=fl4['flowdata'].value,fields=fl4['flowfields'].value)
             #id4 = Dataset(data=fl4['flowid'].value,fields=fl4['flowidfields'].value)
