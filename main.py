@@ -4,7 +4,7 @@
 def psd(w, bounds):
     """auto-correlation of packet process"""
     from scipy.signal import  correlate
-    from scipy.fftpack import rfft
+    from scipy.fftpack import fft
     from dataset import Variable
     import numpy as np
     paylen =  Variable('paylen')
@@ -16,13 +16,35 @@ def psd(w, bounds):
         amp = (amp*packets[...,0]).sum(1)
     else:
         #amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...])).sum(1)
-        amp = (amp).sum(1)
+        amp = amp.sum(1)
     # power spectral density
-    return amp,rfft(correlate(amp,amp,mode='same'))
+    return amp,np.abs(fft(correlate(amp,amp,mode='same')))
+def csd(w, bounds):
+    """auto-correlation of packet process"""
+    from scipy.signal import  correlate
+    from scipy.fftpack import fft
+    from dataset import Variable
+    import numpy as np
+    if len(w)>100: raise Exception()
+    size =  'size' if 'size' in w else 'paylen'
+    allpkts = w['time'][np.newaxis,...][...,w[size][...,0] >= 0,...]
+    ampout = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
+    allpkts = w['time'][np.newaxis,...][...,w[size][...,0] < 0,...]
+    ampin = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
+    if 'packets' in w:
+        packets = w['packets'][np.newaxis,...][...,w[size][...,0] >= 0,...]
+        ampout = (ampout*packets[...,0]).sum(1)
+        packets = w['packets'][np.newaxis,...][...,w[size][...,0] < 0,...]
+        ampin = (ampin*packets[...,0]).sum(1)
+    else:
+        ampout = ampout.sum(1)
+        ampin = ampin.sum(1)
+    # power spectral density
+    return np.vstack((ampout,ampin)),np.abs(fft(correlate(ampin,ampout,mode='same')))
 def xsd1(w, bounds):
     """cross-correlation of in-/out-bound packet process"""
     from scipy.signal import  correlate
-    from scipy.fftpack import rfft
+    from scipy.fftpack import fft
     from dataset import Variable
     import numpy as np
     paylen =  Variable('paylen')
@@ -33,11 +55,11 @@ def xsd1(w, bounds):
     ocount = ((outbound[...,0] >= bounds[:-1,...]) & (outbound[...,0] < bounds[1:,...])).sum(1)
     amp = np.vstack((ocount,icount))
     # cross spectral density
-    return amp,rfft(correlate(abs(icount),abs(ocount),mode='same'))
+    return amp,fft(correlate(abs(icount),abs(ocount),mode='same'))
 def xsd2(w, bounds):
     """cross-correlation of in-/out-bound packet volume"""
     from scipy.signal import  correlate
-    from scipy.fftpack import rfft
+    from scipy.fftpack import fft
     from dataset import Variable
     import numpy as np
     paylen =  Variable('paylen')
@@ -48,13 +70,13 @@ def xsd2(w, bounds):
     # packet process
     amp = np.vstack(((outbound[...,1].repeat(wndsize-1,0)* omask).sum(1),(inbound[...,1].repeat(wndsize-1,0)* imask).sum(1)))
     # cross spectral density
-    return amp,rfft(correlate(abs(amp[1]),abs(amp[0]),mode='same'))
+    return amp,fft(correlate(abs(amp[1]),abs(amp[0]),mode='same'))
 
 def get_labeling(id3):
     from dataset import Variable
     import json
     from itertools import product
-    from util import scalar
+    from util import scalar,ip2int,int2ip
 
     flow = Variable('flow')
     src = Variable('src')
@@ -67,56 +89,67 @@ def get_labeling(id3):
     filters = json.load(f)
     labeling2 = {}
     labeling = {}
-    i = 2
     for f in filters:
         if f['type'] not in labeling2:
-            labeling2[f['type']] = i if f['type'] != 'FILTER_LEGITIMATE' else 1
-            i+=1
+            if f['type'] == 'FILTER_LEGITIMATE':
+                labeling2[f['type']] = 1
+            elif f['type'] == 'FILTER_MALICIOUS':
+                labeling2[f['type']] = 2
+            else: labeling2[f['type']] = None
         a = labeling2[f['type']]
         if f['dstIPs'] and f['dstPorts'] and f['srcIPs']:
             for d,dp,s in product(f['dstIPs'],f['dstPorts'],f['srcIPs']):
-                for r in id3.select((src==Extractor.ip2int(s))&(dst==Extractor.ip2int(d))&(dport==dp),fields=('flow',)):
+                for r in id3.select((src==ip2int(s))&(dst==ip2int(d))&(dport==dp),fields=('flow',)):
                     labeling[scalar(r)] = a
         elif f['dstIPs'] and f['dstPorts']:
             for d,dp in product(f['dstIPs'],f['dstPorts']):
-                for r in id3.select((dst==Extractor.ip2int(d))&(dport==dp),fields=('flow',)):
+                for r in id3.select((dst==ip2int(d))&(dport==dp),fields=('flow',)):
                     labeling[scalar(r)] = a
         elif f['dstIPs']:
             for d in f['dstIPs']:
-                for r in id3.select((dst==Extractor.ip2int(d)),fields=('flow',)):
+                for r in id3.select((dst==ip2int(d)),fields=('flow',)):
                     labeling[scalar(r)] = a
         elif f['srcIPs']:
             for d in f['srcIPs']:
-                for r in id3.select((src==Extractor.ip2int(d)),fields=('flow',)):
+                for r in id3.select((src==ip2int(d)),fields=('flow',)):
                     labeling[scalar(r)] = a
     return labeling,dict( (v,k) for k,v in labeling2.items() )
+
 if __name__=='__main__':
-    from  sys import argv
-    from parse import Flowizer,Extractor
-    from util import reverseDns,fig
+    from util import ip2int,int2ip,reverseDns,fig
+    from sys import argv
     import numpy as np
     from h5py import File
     from dataset import Dataset
 
-    flowize4 = Flowizer(fflow=('src', 'sport','dst','dport'),bflow=('dst', 'dport','src','sport'))  # group flow using quad
-
-    if argv[1] == 'pcap':
-        from parse import TraceExtractor
-        from scapy.all import sniff,TCP,UDP,IP
+    if argv[1] == 'filters':
+        import json
+        from os.path import isfile
+        from util import get_filter
+        f = open(argv[2],'w')
+        try:
+            print json.dump([get_filter(f.strip()) for f in argv[3:] if isfile(f)], f)
+        finally:
+            f.close()
+    elif argv[1] == 'pcap':
+        from parse import PcapExtractor
+        #from scapy.all import sniff,TCP,UDP,IP
         from os.path import isfile,basename
+        from util import get_packets
         h5 = File(argv[2],'a')
         tr = h5.require_group('traces')
-        extract = TraceExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
+        extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
         for fn in argv[3:]:
             if isfile(fn) and basename(fn) not in tr.keys():
                 print '## Getting %s...' % fn
                 ## load file
                 #pkts = sniff(offline=fn,lfilter=lambda x: TCP in x or UDP in x)
-                pkts = sniff(offline=fn)
+                #pkts = sniff(offline=fn)
+                pkts = get_packets(fn,extract)
                 print '\t%d packets captured'%len(pkts)
-                print '## Exctracting features...'
+                #print '## Exctracting features...'
                 ## convert to matrix
-                data = Dataset(extract, pkts)
+                data = Dataset(pkts, extract.fields)
                 print '\t%d packets extracted, %d packets discarded'% (data.data.shape[0],len(pkts)-data.data.shape[0])
                 del pkts
                 print '## Storing matrix in %s...' % argv[2]
@@ -153,6 +186,7 @@ if __name__=='__main__':
                     fl.create_dataset('.fields', data = data.fields)
     elif argv[1] == 'flows3':
         from util import timedrun
+        from parse import Flowizer
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
@@ -201,6 +235,7 @@ if __name__=='__main__':
 
     elif argv[1] == 'flows4':
         from util import timedrun
+        from parse import Flowizer
         h5 = File(argv[2],'a')
         if 'traces' in h5:
             tr = h5['traces']
@@ -234,10 +269,17 @@ if __name__=='__main__':
     elif argv[1] == 'samples':
         from dataset import Variable
         from scipy.signal import  correlate
-        from scipy.fftpack import fftfreq,rfft
+        from scipy.fftpack import fftfreq,fft
         from sys import stdout
 
-        for arg in argv[4:]:
+        if argv[4] == 'psd':
+            xsdfnc = psd
+        elif argv[4] == 'csd':
+            xsdfnc = csd
+        else:
+            raise Exception('transformation not specified')
+
+        for arg in argv[5:]:
         #for srate in (100,200,500,1000,2000):
             srate = float(arg)
             if srate<=0:
@@ -260,7 +302,7 @@ if __name__=='__main__':
             else:
                 raise Exception('flows3 or %s not found'%argv[3])
 
-            sampl = h5.require_group('samples_%f'%srate)
+            sampl = h5.require_group('samples_%s_%f'%(xsdfnc.__name__,srate))
 
             if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
                 raise Exception('already processed for different srate and wndsize')
@@ -278,9 +320,9 @@ if __name__=='__main__':
 
             # some colorful sugar
             scalar = lambda x: x.item() if hasattr(x,'item') else x
-            ipfmt = lambda i: '%s:* > %s:%d [%s]' % (Extractor.int2ip(i[1]),Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
-            ipfmt2 = lambda i: '%s:%d [%s]' % (Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
-            ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (Extractor.int2ip(i[1]),Extractor.int2ip(i[2]),i[3],reverseDns(Extractor.int2ip(i[2])))
+            ipfmt = lambda i: '%s:* > %s:%d [%s]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+            ipfmt2 = lambda i: '%s:%d [%s]' % (int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+            ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
 
             stdout.write('\n')
             stdout.flush()
@@ -332,7 +374,7 @@ if __name__=='__main__':
                     if 'paylen' in fl:
                         w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
                     else:
-                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets'))
+                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets','size'))
 
                     if not len(w)>0:
                         unused += np.sum(w['packets']) if 'packets' in w else len(w)
@@ -343,7 +385,7 @@ if __name__=='__main__':
                     # sampling intervals
                     bounds = np.linspace(k, k+wndspan, wndsize, endpoint=True)[...,np.newaxis]
 
-                    amp,xsd = psd(w,bounds)
+                    amp,xsd = xsdfnc(w,bounds)
 
                     if not xsd.any():
                         unused += np.sum(w['packets']) if 'packets' in w else len(w)
@@ -363,7 +405,7 @@ if __name__=='__main__':
                 if  len(amplitude):
                     amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
                     spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
-                    amplitudes[f] = amplitude
+                    #amplitudes[f] = amplitude
                     spectrums[f] = spectrum
                     wids[f] = np.array(wid)
                     if unused:
@@ -381,7 +423,7 @@ if __name__=='__main__':
             flows = list(spectrums.keys())
 
             X = np.vstack(spectrums[f] for f in flows) # spectrums
-            ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
+            #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
             y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
             #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
 
@@ -389,7 +431,7 @@ if __name__=='__main__':
             sampl.create_dataset('.wndsize',data=wndsize)
 
             sampl.create_dataset('X',data=X)
-            sampl.create_dataset('A',data=ampl)
+            #sampl.create_dataset('A',data=ampl)
             sampl.create_dataset('y',data=y)
             #sampl.create_dataset('wnds',data=wnds)
             sampl.create_dataset('id',data=id3.data)
@@ -586,7 +628,7 @@ if __name__=='__main__':
             h5.close()
     elif argv[1] == 'feature':
         from dataset import Variable,Dataset
-        from scipy.fftpack import fftfreq,rfft
+        from scipy.fftpack import fftfreq,fft
         from sys import stdout
         from util import scatter,scalar
 

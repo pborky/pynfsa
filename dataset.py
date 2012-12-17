@@ -3,28 +3,18 @@ __author__ = 'peterb'
 class Dataset(object):
     """Encapsulation of the numpy array, in order to conviently select/update data.
     """
-    def __init__(self, extract=None, pkts=None, data = None,fields = None):
+    def __init__(self, data, fields):
         """constructor
             Input:
-                extract - Extractor instance. Basically a callble that is mapped to each record of input data resulting
-                    in iterable over fields.
-                pkts - iterable over input recordset to be parsed by map . extract
-                data - numpy matrix to directly st up if provided with fields then extract and pkts are not needed
+                data - numpy matrix or list of lists
                 fields - list of column names
-            Example:
-                Dataset(TraceExtractor(), scapy.sniff(...))
-                    creates dataset by parsing of sniffed packets
-                Dataset(data=np.array(...), fields = tuple(...))
-                    creates dataset by directly assigning data
         """
         from numpy import array
         if data is not None and fields is not None:
-            self.data =data
+            self.data = array(data)
             self.fields = tuple(fields)
         else:
-            self.data = array(filter(None,map(extract, pkts)))
-            self.fields = tuple(extract.fields)
-
+            raise Exception('no data')
     def __add__(self,other):
         """add two dataset objects. Must have same shape and fields."""
         from numpy import vstack

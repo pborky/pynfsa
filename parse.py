@@ -8,18 +8,51 @@ class Extractor(object):
     @staticmethod
     def ip2int(ip):
         """convert string IPv4 address to int"""
-        from ipaddr import IPAddress
-        a = map(ord,IPAddress(ip).packed)
-        b = [pow(256,i)for i in range(len(a)-1,-1,-1)]
-        return int(sum ( map (lambda x,y: x*y , a,b) ))
+        from util import ip2int
+        return ip2int(ip)
     @staticmethod
     def int2ip(ip):
         """convert int to string IPv4 address"""
-        from ipaddr import IPAddress
-        return IPAddress(ip).compressed
+        from util import int2ip
+        return int2ip(ip)
     def __init__(self, fields):
         """construct Extrator callable that return fields."""
         self.fields = tuple(fields)
+
+class PcapExtractor(Extractor):
+    """Used for extraction of attributes from PCAP data. """
+    def __call__(self, pkt):
+        from impacket.ImpactPacket import IP,TCP,UDP,ICMP,Data
+        #from numpy import int64
+        if (IP not in pkt) or (TCP not in pkt and UDP not in pkt):
+            return None
+        ip = pkt[IP]
+        result = {
+            'time':int(pkt.get_timestamp()*1e6),
+            'src': Extractor.ip2int(ip.get_ip_src()),
+            'dst': Extractor.ip2int(ip.get_ip_dst()),
+            'paylen': ip.get_ip_len() - 4*ip.get_ip_hl(),
+            'sport': 0,
+            'dport': 0,
+            'proto': ip.get_ip_p(),
+            'seq': 0,
+            'flags': 0,
+            'flow': 0
+        }
+
+        if TCP in pkt:
+            t = pkt[TCP]
+            result['paylen'] -=  4*t.get_th_off()
+            result['sport'] = t.get_th_sport()
+            result['dport'] = t.get_th_dport()
+            result['seq'] = t.get_th_seq()
+            result['flags'] = t.get_th_flags() & 0x1ff
+        elif UDP in pkt:
+            u = pkt[UDP]
+            result['paylen'] -=  8
+            result['sport'] = u.get_uh_sport()
+            result['dport'] = u.get_uh_dport()
+        return tuple(result[f] for f in  self.fields)
 
 class TraceExtractor(Extractor):
     """Used for extraction of attributes from TCP and UDP packet trace data. """
