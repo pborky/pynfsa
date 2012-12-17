@@ -22,18 +22,19 @@ def get_packets(fn,extractor):
         @classmethod
         def decode(cls,data):
             from impacket.ImpactDecoder import LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder
-            if not hasattr(cls,'decoders'):
-                cls.decoders = [LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder]
-            i = len(cls.decoders)
+            if not hasattr(cls,'hits'):
+                cls.hits = {LinuxSLLDecoder:0,EthDecoder:0,IPDecoder:0,ARPDecoder:0}
+            cls.decoders = sorted([LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder],key=cls.hits.get)
+            i = len(cls.decoders) -1
             while True:
                 try:
-                    decoder = cls.decoders[0]()
-                    return decoder.decode(data)
+                    decoder = cls.decoders[i]()
+                    result = decoder.decode(data)
+                    cls.hits[cls.decoders[i]] += 1
+                    return  result
                 except:
                     i -= 1
-                    if not i: raise
-                    d = cls.decoders.pop(0)
-                    cls.decoders.append(d)
+                    if i < 0: raise
         def __init__(self, pktlen, data, timestamp):
             from impacket.ImpactPacket import PacketBuffer
             self.pktlen = pktlen
