@@ -14,25 +14,33 @@ def int2ip(ip):
 
 def get_packets(fn,extractor):
     """Exctracts information from packets given by file name - 'fn'
-
     """
-
-
     class PacketWrapper(object):
         @classmethod
         def decode(cls,data):
+            """
+            Because  ImpactDecoder has crappy suport for automatic detection of the packet format
+            we must detect the most stable decoder. for linux cooked capture files it allways chooses
+            LinuxSLLDecoder but for the other protocols or mixed captures we must do magic.
+            """
             from impacket.ImpactDecoder import LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder
             from impacket.ImpactPacket import  Data
+            # set up the hit rate mapping
             if not hasattr(cls,'hits'):
                 cls.hits = {LinuxSLLDecoder:0,EthDecoder:0,IPDecoder:0,ARPDecoder:0}
-            cls.decoders = sorted([LinuxSLLDecoder,EthDecoder,IPDecoder,ARPDecoder],key=cls.hits.get)
-            i = len(cls.decoders) - 1
+            # sotr the decoder using the hitrates
+            decoders = sorted(cls.hits.keys(),key=cls.hits.get)
+            # and start with most reliable one
+            i = len(decoders) - 1
             while True:
                 try:
-                    decoder = cls.decoders[i]
+                    decoder = decoders[i]
                     result = decoder().decode(data)
                     if isinstance(result.child(),Data):
+                        # we do not accept this sollution -
+                        # maybe the packet is malformed or decoder is inappropiate
                         raise
+                    # okay update the hit rate and return
                     cls.hits[decoder] += 1
                     return  result
                 except:
