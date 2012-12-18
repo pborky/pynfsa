@@ -333,6 +333,8 @@ def get_samples(opt, h5= None):
 def opts(args=None):
     from argparse import ArgumentParser
     from sys import argv
+    from info import __description__,__version__,__prog__,__date__,__author__
+
     if not args: args = argv[1:]
 
     actions = ('raw','flow','sample','model','filter', 'load')
@@ -340,14 +342,16 @@ def opts(args=None):
     transforms  = ('csd','psd')
     filetypes  = ('pcap','netflow')
 
-    parser = ArgumentParser(description='Experimental software spectral analysis on pcap and netflow data.')
+    parser = ArgumentParser(description=__description__)
 
 
-    actionhelp = 'action to execute; raw stores "pcap" or netflow data in h5 database, "flow" marks flows and extracts attributes, ' \
-                 '"sample" computes sampling at given sample rate and tranformations at given windowing, "model" fits ' \
-                 'model to data stored in database, filter converts XML Ip filters to JSON format and "load" loads' \
-                 ' database into memory'
-    parser.add_argument('action',choices=actions, metavar='(%s)'%('|'.join(actions)), help=actionhelp)
+    parser.add_argument('--version', action='version', version='%s v%s\nCopyright (C) %s %s'%(__prog__,__version__,__date__.split('-',1)[0],__author__), help= 'show version information')
+
+    parser.add_argument('action',choices=actions, metavar='(%s)'%('|'.join(actions)), help= ''\
+            'action to execute; raw stores "pcap" or netflow data in h5 database, "flow" marks flows and extracts attributes, '\
+            '"sample" computes sampling at given sample rate and tranformations at given windowing, "model" fits '\
+            'model to data stored in database, filter converts XML Ip filters to JSON format and "load" loads'\
+            ' database into memory')
     parser.add_argument('database', metavar='<database file>', help='hdf5 array database')
     parser.add_argument('file', nargs='*', metavar='<input file>', help='input files to process')
 
@@ -363,9 +367,8 @@ def opts(args=None):
     group = parser.add_argument_group('Sampling options', 'Required for "sample" and "model" actions')
     group.add_argument('-s', dest='srate', metavar='<sample rate>',action='append',type=float,help='sample rate to use, can be specified multiple times')
     group.add_argument('-w', dest='window', metavar='<window length>',action='append',type=int,help='window lengths to use, can be specified multiple times')
-    group.add_argument('-t', dest='transform', metavar='(%s)'%('|'.join(transforms)), choices=transforms,help='tranformation to use, can be: ' \
-                                                                                                              '"csd" for cross spectral density or ' \
-                                                                                                              '"psd" for power spectral density')
+    group.add_argument('-t', dest='transform', metavar='(%s)'%('|'.join(transforms)), choices=transforms,help=''\
+          'tranformation to use, can be: "csd" for cross spectral density or "psd" for power spectral density')
 
 
     group = parser.add_argument_group('Model estimation options', 'Required for "model" action')
