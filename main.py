@@ -1,73 +1,5 @@
+#!/usr/bin/python
 
-
-
-def psd(w, bounds):
-    """auto-correlation of packet process"""
-    from scipy.signal import  correlate
-    from scipy.fftpack import fft
-    from dataset import Variable
-    import numpy as np
-    allpkts = w['time'][np.newaxis,...]
-    amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
-    if 'packets' in w:
-        packets = w['packets'][np.newaxis,...]
-        #amp = (((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))*packets).sum(1)
-        amp = (amp*packets[...,0]).sum(1)
-    else:
-        #amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...])).sum(1)
-        amp = amp.sum(1)
-    # power spectral density
-    return amp,np.abs(fft(correlate(amp,amp,mode='same')))
-def csd(w, bounds):
-    """auto-correlation of packet process"""
-    from scipy.signal import  correlate
-    from scipy.fftpack import fft
-    import numpy as np
-    size =  'size' if 'size' in w else 'paylen'
-    allpkts = w['time'][np.newaxis,...][...,w[size][...,0] >= 0,...]
-    ampout = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
-    allpkts = w['time'][np.newaxis,...][...,w[size][...,0] < 0,...]
-    ampin = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
-    if 'packets' in w:
-        packets = w['packets'][np.newaxis,...][...,w[size][...,0] >= 0,...]
-        ampout = (ampout*packets[...,0]).sum(1)
-        packets = w['packets'][np.newaxis,...][...,w[size][...,0] < 0,...]
-        ampin = (ampin*packets[...,0]).sum(1)
-    else:
-        ampout = ampout.sum(1)
-        ampin = ampin.sum(1)
-    # power spectral density
-    return np.vstack((ampout,ampin)),np.abs(fft(correlate(ampout,ampin,mode='same')))
-def xsd1(w, bounds):
-    """cross-correlation of in-/out-bound packet process"""
-    from scipy.signal import  correlate
-    from scipy.fftpack import fft
-    from dataset import Variable
-    import numpy as np
-    paylen =  Variable('paylen')
-    inbound = w.select(paylen<0,fields=('time',))[np.newaxis,...]
-    outbound = w.select(paylen>=0,fields=('time',))[np.newaxis,...]
-    # in-/out-bound packet process
-    icount = ((inbound[...,0] >= bounds[:-1,...]) & (inbound[...,0] < bounds[1:,...])).sum(1)
-    ocount = ((outbound[...,0] >= bounds[:-1,...]) & (outbound[...,0] < bounds[1:,...])).sum(1)
-    amp = np.vstack((ocount,icount))
-    # cross spectral density
-    return amp,fft(correlate(abs(icount),abs(ocount),mode='same'))
-def xsd2(w, bounds):
-    """cross-correlation of in-/out-bound packet volume"""
-    from scipy.signal import  correlate
-    from scipy.fftpack import fft
-    from dataset import Variable
-    import numpy as np
-    paylen =  Variable('paylen')
-    inbound = w.select(paylen<0,fields=('time','paylen'))[np.newaxis,...]
-    outbound = w.select(paylen>=0,fields=('time','paylen'))[np.newaxis,...]
-    imask = (inbound[...,0] >= bounds[:-1,...]) & (inbound[...,0] < bounds[1:,...])
-    omask = (outbound[...,0] >= bounds[:-1,...]) & (outbound[...,0] < bounds[1:,...])
-    # packet process
-    amp = np.vstack(((outbound[...,1].repeat(wndsize-1,0)* omask).sum(1),(inbound[...,1].repeat(wndsize-1,0)* imask).sum(1)))
-    # cross spectral density
-    return amp,fft(correlate(abs(amp[1]),abs(amp[0]),mode='same'))
 
 def get_labeling(id3):
     from dataset import Variable
@@ -111,334 +43,403 @@ def get_labeling(id3):
                 for r in id3.select((src==ip2int(d)),fields=('flow',)):
                     labeling[scalar(r)] = a
     return labeling,dict( (v,k) for k,v in labeling2.items() )
-def get_pcap(pcapfns, callback, keys=()):
-    from parse import PcapExtractor
+def get_raw(opt, callback=None, keys=(), h5=None):
+    from extractor import PcapExtractor,FlowExtractor
     from os.path import isfile,basename
     from util import get_packets
-    extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
-    for fn in pcapfns:
+
+    if opt.in_format == 'pcap':
+        extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
+        tr = h5.require_group('traces') if h5 else None
+        praser = get_packets
+    elif opt.in_format == 'netflow':
+        extract = FlowExtractor( ('time', 'duration','src','sport','dst','dport','proto', 'packets', 'size','flags', 'flows', 'flow') )
+        tr = h5.require_group('netflows')  if h5 else None
+        def praser(fn, extract):
+            f = open(fn,'r')
+            try: flows = f.readlines()
+            finally: f.close()
+            return filter(None,map(extract,flows))
+    else:
+        raise NotImplementedError('in_format')
+
+    if tr:
+        if not callable(callback):
+            callback = lambda data,fn: data.save(tr.require_group(fn))
+        if not keys:
+            keys = tr.keys()
+    else:
+        if not callable(callback):
+            raise Exception('h5 file needed')
+
+    for fn in opt.file:
         if isfile(fn) and basename(fn) not in keys:
-            print '## Getting %s...' % fn
-            ## load file
-            pkts = get_packets(fn,extract)
-            print '\t%d packets captured'%len(pkts)
-            #print '## Exctracting features...'
-            ## convert to matrix
+            print '## Extracting features from file %s...' % fn
+            pkts = praser(fn,extract)
+            print '\t%d records captured'%len(pkts)
             data = Dataset(pkts, extract.fields)
-            print '\t%d packets extracted, %d packets discarded'% (data.data.shape[0],len(pkts)-data.data.shape[0])
             del pkts
+            print '## Storing matrix in %s...' % opt.database
             callback(data,basename(fn))
+
+def get_flow(opt, h5 = None):
+    from util import timedrun
+    from flowizer import Flowizer
+
+    result = [[],()]
+    def process(data,flowize,postfix=''):
+        print '## Extracting flows using %s-tuple'%opt.flowid
+        fl = h5.require_group(flowid)
+        q,f = flowize(data, Dataset(h5=fl['flowid'])) if 'flowid' in fl else flowize(data)
+        dataname= 'data_%s'%postfix if postfix else 'data'
+        for i in (dataname,'flowid'):
+            if i in fl:
+                del fl[i]
+        print '## Storing matrices in %s...' % opt.database
+        f.save(fl.require_group(dataname))
+        q.save(fl.require_group('flowid'))
+        result[0].append(f)
+        result[1] = q
+
+    if not h5 :
+        h5 = File(opt.database,'a')
+
+    if opt.flowid == '3':
+        fflow=('src','dst','dport')
+        bflow=('dst','src','sport')
+        flowid = 'flows3'
+    elif opt.flowid == '4':
+        fflow=('src', 'sport','dst','dport')
+        bflow=('dst', 'dport','src','sport')
+        flowid = 'flows4'
+    else:
+        raise NotImplementedError('flowid')
+
+    if opt.in_format == 'pcap':
+        fields = ('time', 'paylen', 'flow')
+        tr = h5['traces'] if 'traces' in h5 else None
+    elif opt.in_format == 'netflow':
+        fields = ('time', 'size', 'packets', 'flow')
+        tr = h5['netflows'] if 'netflows' in h5 else None
+    else:
+        raise NotImplementedError('in_format')
+
+    flowize = timedrun(Flowizer(fields = fields,fflow=fflow,bflow=bflow))
+
+    if not tr:
+        fl = h5.require_group(flowid)
+        keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
+        get_raw(opt,lambda x,fn:process(x,flowize,fn),keys=keys)
+    else:
+        try:
+            data = reduce(lambda x,y:x+y,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
+            process(data,flowize)
+        except MemoryError:
+            for k in sorted(tr.keys()):
+                data = Dataset(h5=tr[k])
+                process(data,flowize,k)
+    return tuple(result)
+
+def get_samples(opt, h5= None):
+    from sampler import csd,psd
+    from dataset import Variable,Dataset
+    from scipy.fftpack import fftfreq
+    from sys import stdout
+    from itertools import product
+    from h5py import File
+
+    if opt.flowid == '3':
+        flowid = 'flows3'
+    elif opt.flowid == '4':
+        flowid = 'flows4'
+    else:
+        raise NotImplementedError('flowid')
+
+    if opt.transform == 'psd':
+        xsdfnc = psd
+    elif opt.transform == 'csd':
+        xsdfnc = csd
+    else:
+        raise NotImplementedError('transform')
+
+    if opt.srate:
+        srates = opt.srate
+    else:
+        raise ValueError('No sample rate specified.')
+
+    if opt.window:
+        windows = opt.window
+    else:
+        raise ValueError('No window length specified.')
+
+    if not h5:
+        h5 = File(opt.database,'a')
+
+    if flowid in h5:
+        fl3 = h5[flowid]
+        if 'data' in fl3:
+            flows3 = Dataset(h5=fl3['data'])
+        else:
+            flows3 = reduce(lambda x,y:x+y,(Dataset(h5=fl3[k]) for k in fl3.keys() if k.split('_',1)[0] == 'data') )
+        id3 = Dataset(h5=fl3['flowid'])
+    else:
+        flows3,id3 = get_flow(opt,h5 = h5)
+        flows3 = reduce(lambda x,y:x+y, flows3 )
+
+    samples = h5.require_group('samples')
+
+    for srate,wndsize in product(srates,windows) : #srates:
+        if srate<=0 :
+            continue
+
+
+        speriod = 1./ srate # sampling period in seconds
+        wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
+
+        flow =  Variable('flow')
+        time =  Variable('time')
+
+        sampl = samples.require_group('data%s_%f_%d'%(xsdfnc.__name__,srate,wndsize))
+
+        if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
+            raise Exception('already processed for different srate and wndsize')
+
+        spectrums = {}
+        amplitudes = {}
+        wids = {}
+        ips = {}
+
+        # some colorful sugar
+        scalar = lambda x: x.item() if hasattr(x,'item') else x
+        ipfmt = lambda i: '%s:* > %s:%d [%s]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+        ipfmt2 = lambda i: '%s:%d [%s]' % (int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+        ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+
+        stdout.write('\n')
+        stdout.flush()
+
+        flows = {}
+        for f in flows3['flow']:
+            f = scalar(f)
+            if f not in flows:
+                flows[f] = 0
+            else:
+                flows[f] += 1
+        flows = dict((k,v) for k,v in flows.items() if v>100)
+
+        l = 1
+        #for f in flid[:chooseflows,0]:
+        for id3row in id3:
+            f = scalar(id3row['flow'])
+            if f not in flows:
+                continue
+
+            ip = tuple(scalar(id3row[i]) for i in ('flow', 'src','dst','dport'))
+            ips[f] = ipfmt(ip)
+
+            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, \033[36mprocessing flow\033[0m: %s  '%(100.*l/len(flows),srate,ipfmtc(ip)))
+            stdout.flush()
+            l += 1
+
+            # select related packets
+            #fl =  flows[(flows[...,2] == f ),...]
+            fl =  flows3.select(flow==f,retdset=True)
+            tm = fl['time']
+            mi = tm.min()
+            ma = tm.max()
+
+            k = mi
+            i = 0
+            spectrum = []
+            amplitude = []
+            wid = []
+            unused = 0
+
+            while k<ma:
+                # 10 dots progressbar
+                if (ma-mi)>=(10*wndspan) and  not ((k-mi)/wndspan) % (((ma-mi)/(10*wndspan))):
+                    stdout.write('\033[36m.\033[0m')
+                    stdout.flush()
+
+                #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
+                if 'paylen' in fl:
+                    w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
+                else:
+                    w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets','size'))
+
+                if not len(w)>0:
+                    unused += np.sum(w['packets']) if 'packets' in w else len(w)
+                    k += wndspan
+                    i += 1
+                    continue
+
+                # sampling intervals
+                bounds = np.linspace(k, k+wndspan, wndsize, endpoint=True)[...,np.newaxis]
+
+                amp,xsd = xsdfnc(w,bounds)
+
+                if not xsd.any():
+                    unused += np.sum(w['packets']) if 'packets' in w else len(w)
+                    k += wndspan
+                    i += 1
+                    continue
+
+                wid.append(i)
+                spectrum.append(xsd)
+                amplitude.append(amp)
+
+                k += wndspan
+                i += 1
+
+            pkts = np.sum(fl['packets']) if 'packets' in fl else len(fl)
+
+            if  len(amplitude):
+                amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
+                spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
+                #amplitudes[f] = amplitude
+                spectrums[f] = spectrum
+                wids[f] = np.array(wid)
+                if unused:
+                    stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
+                else:
+                    stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
+            else:
+                stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
+            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz   '%(100.*l/len(flows),srate))
+            stdout.flush()
+
+        stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz    '% srate)
+        stdout.flush()
+
+        if len(spectrums):
+            flows = list(spectrums.keys())
+
+            X = np.vstack(spectrums[f] for f in flows) # spectrums
+            #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
+            y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
+            #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
+
+            sampl.create_dataset('.srate',data=srate)
+            sampl.create_dataset('.wndsize',data=wndsize)
+
+            sampl.create_dataset('X',data=X)
+            sampl.create_dataset('y',data=y)
+            #sampl.create_dataset('A',data=ampl)
+            #sampl.create_dataset('wnds',data=wnds)
+            id3.save(sampl.require_group('flowids'))
+            sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
+
+
+def opts(args=None):
+    from argparse import ArgumentParser
+    from sys import argv
+    if not args: args = argv[1:]
+
+    actions = ('raw','flow','sample','model','filter', 'load')
+    flowids  = ('3','4')
+    transforms  = ('csd','psd')
+    filetypes  = ('pcap','netflow')
+
+    parser = ArgumentParser(description='Experimental software spectral analysis on pcap and netflow data.')
+
+
+    actionhelp = 'action to execute; raw stores "pcap" or netflow data in h5 database, "flow" marks flows and extracts attributes, ' \
+                 '"sample" computes sampling at given sample rate and tranformations at given windowing, "model" fits ' \
+                 'model to data stored in database, filter converts XML Ip filters to JSON format and "load" loads' \
+                 ' database into memory'
+    parser.add_argument('action',choices=actions, metavar='(%s)'%('|'.join(actions)), help=actionhelp)
+    parser.add_argument('database', metavar='<database file>', help='hdf5 array database')
+    parser.add_argument('file', nargs='*', metavar='<input file>', help='input files to process')
+
+    parser.add_argument('-f', dest='in_format',choices=filetypes, metavar='(%s)'%('|'.join(filetypes)), help='input file format')
+    parser.add_argument('-o', dest='out_file', metavar='<output file>', help='output file')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-v', '--verbose', dest='verbosity', action='count', help='increase verbosity')
+    group.add_argument('-q', '--quiet', dest='verbose', action='store_false', help='do not dump to terminal')
+
+    group= parser.add_argument_group('Flow extraction options', 'Required for "flow", "sample" and "model" actions')
+    group.add_argument('-i', dest='flowid',choices=flowids, metavar='(%s)'%('|'.join(flowids)), help='flow identification (3-tuple or 4-tuple)')
+
+    group = parser.add_argument_group('Sampling options', 'Required for "sample" and "model" actions')
+    group.add_argument('-s', dest='srate', metavar='<sample rate>',action='append',type=float,help='sample rate to use, can be specified multiple times')
+    group.add_argument('-w', dest='window', metavar='<window length>',action='append',type=int,help='window lengths to use, can be specified multiple times')
+    group.add_argument('-t', dest='transform', metavar='(%s)'%('|'.join(transforms)), choices=transforms,help='tranformation to use, can be: ' \
+                                                                                                              '"csd" for cross spectral density or ' \
+                                                                                                              '"psd" for power spectral density')
+
+
+    group = parser.add_argument_group('Model estimation options', 'Required for "model" action')
+    #group.add_argument()
+
+    parser.set_defaults(verbose=True,verbosity=0)
+
+    #parser.print_help()
+    longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
+    shortopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if not k.startswith('--'))
+    opt =  parser.parse_args(args)
+
+    if opt.action in ('raw','flow') and not opt.in_format:
+        parser.error('input file format (--input-format) not specified for "raw" or "flow" action')
+
+    if opt.action in ('flow', 'sample') and not opt.flowid:
+        parser.error('flow identification (--flowid) not specified for "flow" or "sample" action')
+
+    if opt.action in ('sample') and not opt.srate:
+        parser.error('sample rate (--srate) not specified for "sample" action')
+
+    if opt.action in ('sample') and not opt.window:
+        parser.error('window (--window) not specified for "sample" action')
+
+    if opt.action in ('sample') and not opt.transform:
+        parser.error('transform (--transform) not specified for "sample" action')
+
+    return opt, longopts, shortopts
+
+
 
 if __name__=='__main__':
     from util import ip2int,int2ip,reverseDns,fig
-    from sys import argv
     import numpy as np
-    from h5py import File
     from dataset import Dataset
+    from h5py import File
 
-    if argv[1] == 'filters':
+    opt, longopts, shortopts = opts()
+    NotImplementedError = lambda s: ValueError('Choice %s%s not implemented'%(longopts.get(s)+'=' or shortopts.get(s)+' ',getattr(opt,s)))
+
+
+    if opt.action == 'filters':
+
         import json
         from os.path import isfile
         from util import get_filter
-        f = open(argv[2],'w')
+        from sys import stdout
+        f = open(opt.out_file,'w') if opt.out_file else stdout
         try:
-            print json.dump([get_filter(f.strip()) for f in argv[3:] if isfile(f)], f)
+            print json.dump([get_filter(f.strip()) for f in opt.file if isfile(f)], f)
         finally:
             f.close()
-    elif argv[1] == 'pcap':
-        from parse import PcapExtractor
-        #from scapy.all import sniff,TCP,UDP,IP
-        from os.path import isfile,basename
-        from util import get_packets
-        h5 = File(argv[2],'a')
-        tr = h5.require_group('traces')
-        extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
-        for fn in argv[3:]:
-            if isfile(fn) and basename(fn) not in tr.keys():
-                print '## Getting %s...' % fn
-                ## load file
-                #pkts = sniff(offline=fn,lfilter=lambda x: TCP in x or UDP in x)
-                #pkts = sniff(offline=fn)
-                pkts = get_packets(fn,extract)
-                print '\t%d packets captured'%len(pkts)
-                #print '## Exctracting features...'
-                ## convert to matrix
-                data = Dataset(pkts, extract.fields)
-                print '\t%d packets extracted, %d packets discarded'% (data.data.shape[0],len(pkts)-data.data.shape[0])
-                del pkts
-                print '## Storing matrix in %s...' % argv[2]
-                data.save(tr.require_group(basename(fn)))
-    if argv[1] == 'netflow':
-        from parse import FlowExtractor
-        from os.path import isfile,basename
-        h5 = File(argv[2],'a')
-        fl = h5.require_group('netflows')
-        extractf = FlowExtractor( ('time', 'duration','src','sport','dst','dport','proto', 'packets', 'size','flags', 'flows', 'flow') )
-        for fn in argv[3:]:
-            if isfile(fn) and basename(fn) not in fl.keys():
-                print '## Getting %s...' % fn
-                ## load file
-                #pkts = sniff(offline=fn,lfilter=lambda x: TCP in x or UDP in x)
-                f = open(fn,'r')
-                try: flows = f.readlines()
-                finally: f.close()
-                print '\t%d flows captured'%len(flows)
-                print '## Exctracting features...'
-                ## convert to matrix
-                data = Dataset(extractf, flows)
-                print '\t%d flows extracted, %d flows discarded'% (data.data.shape[0],len(flows)-data.data.shape[0])
-                del flows
-                print '## Storing matrix in %s...' % argv[2]
-                data.save(fl.require_group(basename(fn)))
-    elif argv[1] == 'flows3':
-        from util import timedrun
-        from parse import Flowizer
 
-        def process(data,flowize,id):
-            print '## Extracting flows using triple'
-            fl = h5.require_group('flows3')
-            q,f = flowize(data, Dataset(h5=fl['flowid'])) if 'flowid' in fl else flowize(data)
-            for i in ('data%s'%id,'flowid'):
-                if i in fl:
-                    del fl[i]
-            print '## Storing matrices in %s...' % argv[2]
-            f.save(fl.require_group('data%s'%id))
-            q.save(fl.require_group('flowid'))
+    elif opt.action == 'load':
 
-        h5 = File(argv[2],'a')
-        if 'traces' in h5:
-            tr = h5['traces']
-            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-        elif 'netflows' in h5:
-            tr = h5['netflows']
-            flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
-        else:
-            tr = None
-            flowize = timedrun(Flowizer(fflow=('src','dst','dport'),bflow=('dst','src','sport')))  # group flow using triple
+        h5=File(opt.database,'a')
 
-        if not tr:
-            fl = h5.require_group('flows3')
-            keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
-            get_pcap(argv[3:],lambda x,fn:process(x,flowize,'_%s'%fn),keys=keys)
-        else:
-            try:
-                data = reduce(lambda x,y:x+y,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
-                process(data,flowize,'')
-            except MemoryError:
-                for k in sorted(tr.keys()):
-                    data = Dataset(h5=tr[k])
-                    process(data,flowize,'_%s'%k)
+    elif opt.action == 'raw':
 
-    elif argv[1] == 'flows4':
-        from util import timedrun
-        from parse import Flowizer
-        h5 = File(argv[2],'a')
-        if 'traces' in h5:
-            tr = h5['traces']
-        elif 'netflows' in h5:
-            tr = h5['netflows']
-        else:
-            raise Exception('missing traces or flows')
-        data = Dataset(data=np.vstack(tr[k] for k in sorted(tr.keys()) if k!='.fields'),fields=tuple(tr['.fields']))
-        ## extract flows
-        print '## Extracting flows using quad'
-        if 'paylen' in data:
-            flowize = timedrun(Flowizer(fflow=('src', 'sport','dst','dport'),bflow=('dst', 'dport','src','sport')))  # group flow using triple
-        elif 'size' in data and 'packets' in data:
-            flowize = timedrun(Flowizer(fields = ('time', 'size', 'packets', 'flow'), fflow=('src', 'sport','dst','dport'),bflow=('dst', 'dport','src','sport')))  # group flow using triple
-        else:
-            raise Exception('dataset not usable')
-        q,f = flowize(data)
-        fl = h5.require_group('flows4')
+        get_raw(opt,h5=File(opt.database,'a'))
+        exit()
 
-        for i in ('flowdata','flowfields','flowid','flowidfields'):
-            if i in fl:
-                del fl[i]
+    elif opt.action == 'flow':
 
-        print '## Storing matrices in %s...' % argv[2]
-        fl.create_dataset('flowdata',data = f.data,compression='gzip')
-        fl.create_dataset('flowid',data = q.data,compression='gzip')
-        print '## Storing fields in %s...' % argv[2]
-        fl.create_dataset('flowfields',data = f.fields,compression='gzip')
-        fl.create_dataset('flowidfields',data = q.fields,compression='gzip')
+        get_flow(opt, h5 = File(opt.database,'a'))
+        exit()
 
-    elif argv[1] == 'samples':
-        from dataset import Variable
-        from scipy.signal import  correlate
-        from scipy.fftpack import fftfreq,fft
-        from sys import stdout
+    elif opt.action == 'sample':
 
-        if argv[4] == 'psd':
-            xsdfnc = psd
-        elif argv[4] == 'csd':
-            xsdfnc = csd
-        else:
-            raise Exception('transformation not specified')
+        get_samples(opt, h5 = File(opt.database,'a'))
+        exit()
 
-        for arg in argv[5:]:
-        #for srate in (100,200,500,1000,2000):
-            srate = float(arg)
-            if srate<=0:
-                continue
-
-            wndsize = 200
-
-            speriod = 1./ srate # sampling period in seconds
-            wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
-
-            flow =  Variable('flow')
-            time =  Variable('time')
-
-            h5 = File(argv[2],'a')
-
-            if argv[3] in h5:
-                fl3 = h5[argv[3]]
-            elif 'flows3' in h5:
-                fl3 = h5['flows3']
-            else:
-                raise Exception('flows3 or %s not found'%argv[3])
-
-            sampl = h5.require_group('samples_%s_%f'%(xsdfnc.__name__,srate))
-
-            if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
-                raise Exception('already processed for different srate and wndsize')
-
-            if 'data' in fl3:
-                flows3 = Dataset(h5=fl3['data'])
-            else:
-                flows3 = reduce(lambda x,y:x+y,(Dataset(h5=fl3[k]) for k in fl3.keys() if k.split('_',1)[0] == 'data') )
-            id3 = Dataset(h5=fl3['flowid'])
-
-            #flows4 = Dataset(data=fl4['flowdata'].value,fields=fl4['flowfields'].value)
-            #id4 = Dataset(data=fl4['flowid'].value,fields=fl4['flowidfields'].value)
-
-            spectrums = {}
-            amplitudes = {}
-            wids = {}
-            ips = {}
-
-            # some colorful sugar
-            scalar = lambda x: x.item() if hasattr(x,'item') else x
-            ipfmt = lambda i: '%s:* > %s:%d [%s]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
-            ipfmt2 = lambda i: '%s:%d [%s]' % (int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
-            ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
-
-            stdout.write('\n')
-            stdout.flush()
-
-            flows = {}
-            for f in flows3['flow']:
-                f = scalar(f)
-                if f not in flows:
-                    flows[f] = 0
-                else:
-                    flows[f] += 1
-            flows = dict((k,v) for k,v in flows.items() if v>100)
-
-            l = 1
-            #for f in flid[:chooseflows,0]:
-            for id3row in id3:
-                f = scalar(id3row['flow'])
-                if f not in flows:
-                    continue
-
-                ip = tuple(scalar(id3row[i]) for i in ('flow', 'src','dst','dport'))
-                ips[f] = ipfmt(ip)
-
-                stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, \033[36mprocessing flow\033[0m: %s  '%(100.*l/len(flows),srate,ipfmtc(ip)))
-                stdout.flush()
-                l += 1
-
-                # select related packets
-                #fl =  flows[(flows[...,2] == f ),...]
-                fl =  flows3.select(flow==f,retdset=True)
-                tm = fl['time']
-                mi = tm.min()
-                ma = tm.max()
-
-                k = mi
-                i = 0
-                spectrum = []
-                amplitude = []
-                wid = []
-                unused = 0
-
-                while k<ma:
-                    # 10 dots progressbar
-                    if (ma-mi)>=(10*wndspan) and  not ((k-mi)/wndspan) % (((ma-mi)/(10*wndspan))):
-                        stdout.write('\033[36m.\033[0m')
-                        stdout.flush()
-
-                    #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
-                    if 'paylen' in fl:
-                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
-                    else:
-                        w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets','size'))
-
-                    if not len(w)>0:
-                        unused += np.sum(w['packets']) if 'packets' in w else len(w)
-                        k += wndspan
-                        i += 1
-                        continue
-
-                    # sampling intervals
-                    bounds = np.linspace(k, k+wndspan, wndsize, endpoint=True)[...,np.newaxis]
-
-                    amp,xsd = xsdfnc(w,bounds)
-
-                    if not xsd.any():
-                        unused += np.sum(w['packets']) if 'packets' in w else len(w)
-                        k += wndspan
-                        i += 1
-                        continue
-
-                    wid.append(i)
-                    spectrum.append(xsd)
-                    amplitude.append(amp)
-
-                    k += wndspan
-                    i += 1
-
-                pkts = np.sum(fl['packets']) if 'packets' in fl else len(fl)
-
-                if  len(amplitude):
-                    amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
-                    spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
-                    #amplitudes[f] = amplitude
-                    spectrums[f] = spectrum
-                    wids[f] = np.array(wid)
-                    if unused:
-                        stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
-                    else:
-                        stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
-                else:
-                    stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
-                stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz   '%(100.*l/len(flows),srate))
-                stdout.flush()
-
-            stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz    '% srate)
-            stdout.flush()
-
-            if len(spectrums):
-                flows = list(spectrums.keys())
-
-                X = np.vstack(spectrums[f] for f in flows) # spectrums
-                #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
-                y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
-                #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
-
-                sampl.create_dataset('.srate',data=srate)
-                sampl.create_dataset('.wndsize',data=wndsize)
-
-                sampl.create_dataset('X',data=X)
-                sampl.create_dataset('y',data=y)
-                #sampl.create_dataset('A',data=ampl)
-                #sampl.create_dataset('wnds',data=wnds)
-                id3.save(sampl.require_group('flowids'))
-                sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
-
-    elif argv[1] == 'model':
-        h5 = File(argv[2],'a')
+    elif opt.action == 'model':
+        h5 = File(opt.database,'a')
         def get_sampl(i):
             from dataset import Variable
             dport =  Variable('dport')
@@ -451,7 +452,7 @@ if __name__=='__main__':
             y = sampl['y'].value
             freqs = sampl['freqs'].value
 
-            id3 = Dataset(data=sampl['id'].value,fields=sampl['idfields'].value)
+            id3 = Dataset(h5=sampl['flowids'])
 
             #web = (id3.select((dport==80)|(dport==443), fields=('flow',))).squeeze().tolist()
             #ssh = (id3.select((dport==22), fields=('flow',))).squeeze().tolist()
@@ -625,7 +626,7 @@ if __name__=='__main__':
                 fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
         finally:
             h5.close()
-    elif argv[1] == 'feature':
+    elif opt.action == 'feature':
         from dataset import Variable,Dataset
         from scipy.fftpack import fftfreq,fft
         from sys import stdout
@@ -637,7 +638,7 @@ if __name__=='__main__':
         dport = Variable('dport')
         sport = Variable('sport')
 
-        h5 = File(argv[2],'a')
+        h5 = File(opt.database,'a')
 
         if len(argv)>3:
         #for grp in (k for k in h5.keys() if k.startswith('samples_')):
