@@ -3,26 +3,17 @@
 class Flowizer(object):
     """ Annotates records based on requirements.
     """
-    def __init__(self, fields = ('time', 'paylen', 'flow'), fflow=('src','sport','dst','dport'), bflow=('dst','dport','src','sport'), usesyns = True):
+    def __init__(self, fields = ('time', 'paylen', 'flow'), fflow=('src','sport','dst','dport'), bflow=('dst','dport','src','sport'), usesyns = True, opt=None):
         self.fields = fields
         self.fflow = fflow
         self.bflow = bflow
-        self.usesyns = usesyns
-    @staticmethod
-    def _quad2str(d, fields):
-        from util import int2ip
-        if 'src' not in fields or 'dst' not in fields:
-            raise ValueError('items "src" and "dst" are expected to identify flow')
-        x = [ ((d[fields.index(s)]) if s in fields else '*') for s in ('src','sport','dst','dport') ]
-        reverse = fields.index('src') > fields.index('dst')
-        for i in (0,2):
-            if x[i] != '*':
-                x[i] = int2ip(x[i])
-        return '\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m' % tuple(x)
+        self.reverse_dns = opt.reverse_dns if opt else True
+        self.protocol = opt.protocol if opt else True
+        self.usesyns = opt.usesyns if opt else usesyns
     def __call__(self, data, flowids=None):
         from numpy import array,abs
         from dataset import Variable,Dataset
-        from util import scalar,int2ip
+        from util import scalar,int2ip,flow2str
         from sys import stdout
         variables = dict((k,Variable(k))for k in ('src','sport','dst','dport'))
 
@@ -31,7 +22,9 @@ class Flowizer(object):
         proto =  Variable('proto')
         time =  Variable('time')
 
-        pay = data.select((proto==6),order='time',retdset=True)
+        flow2str2 =  lambda x,f: flow2str(x,f,dns=self.reverse_dns,services=self.reverse_dns)
+
+        pay = data.select((proto==self.protocol),order='time',retdset=True)
         hashes = {} if flowids is None else dict((scalar(f['flow']),tuple(f[self.fflow])) for f in flowids)
         scalar = lambda x : x.item() if  hasattr(x,'item') else x
         negate = lambda x: -abs(x)
@@ -46,13 +39,13 @@ class Flowizer(object):
             negative = False
             if h in hashes:
                 if hashes[h] != t:
-                    stdout.write('\r****** collision in %s (hash: %d)\n' %(Flowizer._quad2str(t, self.fflow),h))
+                    stdout.write('\r****** collision in %s (hash: %d)\n' %(flow2str2(t,self.fflow),h))
                     stdout.flush()
                     dropped += 1
                     continue
             elif hr in hashes:
                 if hashes[hr] != tr:
-                    stdout.write( '\r****** collision in %s (hash: %d)\n' %(Flowizer._quad2str(tr, self.bflow),hr))
+                    stdout.write( '\r****** collision in %s (hash: %d)\n' %(flow2str2(tr,self.bflow),hr))
                     stdout.flush()
                     dropped += 1
                     continue
@@ -66,13 +59,13 @@ class Flowizer(object):
                         # we don`t care about SYN+ACK
                         syn = scalar(x['flags'])&18 == 2
                     if not syn:
-                        stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),h))
+                        stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (flow2str2(t,self.fflow),h))
                         stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                         stdout.flush()
                         dropped += 1
                         droppedips.add((scalar(x['dst']),scalar(x['dport'])))
                         continue
-                stdout.write( '\r###### new flow %s (hash: %d)\n' % (Flowizer._quad2str(t, self.fflow),h))
+                stdout.write( '\r###### new flow %s (hash: %d)\n' % (flow2str2(t,self.fflow),h))
                 stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                 stdout.flush()
                 hashes[h] = t

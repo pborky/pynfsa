@@ -3,9 +3,10 @@
 def ip2int(ip):
     """convert string IPv4 address to int"""
     from ipaddr import IPAddress
+    from operator import mul
     a = map(ord,IPAddress(ip).packed)
     b = [pow(256,i)for i in range(len(a)-1,-1,-1)]
-    return int(sum ( map (lambda x,y: x*y , a,b) ))
+    return int(sum ( map (mul , a,b) ))
 
 def int2ip(ip):
     """convert int to string IPv4 address"""
@@ -141,6 +142,9 @@ def fig(plt_fnc, name=None, show=True):
     from matplotlib.pyplot import figure
     import numpy as np
 
+    if hasattr(plt_fnc,'__len__') and len(plt_fnc)==1:
+        plt_fnc, = plt_fnc
+
     fig = figure()
     if callable(plt_fnc):
         ax = a = fig.add_subplot(111)
@@ -256,16 +260,67 @@ def timedrun(fnc):
     return TimedRun(fnc)
 
 def reverseDns(ip):
-    """ execute dig to reverse lookup of given address
+    """ execute reverse lookup of given address
     """
     try:
         import socket
         return socket.gethostbyaddr(ip)[0]
     except:
-        pass
+        return ip
+
+class TcpServices(object):
+    @classmethod
+    def get_reverse_map(cls):
+        if not hasattr(cls,'TCP_REVERSE'):
+            cls.TCP_REVERSE = dict((v,k) for k,v in cls.get_map().iteritems())
+        return cls.TCP_REVERSE
+    @classmethod
+    def get_map(cls):
+        if not hasattr(cls,'TCP_SERVICES'):
+            try:
+                from scapy.all import TCP_SERVICES
+                cls.TCP_SERVICES = dict((k,'%d'%TCP_SERVICES[k]) for k in TCP_SERVICES.keys())
+            except ImportError:
+                cls.TCP_SERVICES = {}
+        return cls.TCP_SERVICES
+    @classmethod
+    def get_service(cls,port):
+        return cls.get_reverse_map().get('%s'%port)
+    @classmethod
+    def get_port(cls,service):
+        return cls.get_map().get('%s'%service)
+
+def flow2str(flow, fields = None, dns=False, services=False, color=True):
+    template = '\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m' if color else '%s:%s > %s:%s'
+    if isinstance(flow,tuple):
+        if 'src' not in fields or 'dst' not in fields:
+            raise ValueError('items "src" and "dst" are expected to identify flow')
+        x = [ ((flow[fields.index(s)]) if s in fields else '*') for s in ('src','sport','dst','dport') ]
+        reverse = fields.index('src') > fields.index('dst')
+    else:
+        if 'src' not in flow or 'dst' not in flow:
+            raise ValueError('items "src" and "dst" are expected to identify flow')
+        x = [ (scalar(flow[s]) if s in flow else '*') for s in ('src','sport','dst','dport') ]
+    for i in (0,2):
+        if x[i] != '*':
+            if dns:
+                x[i] = reverseDns(int2ip(x[i]))
+            else:
+                x[i] = int2ip(x[i])
+    if services:
+        for i in (1,3):
+            p = TcpServices.get_service(x[i])
+            if p:
+                x[i] = p
+    return template % tuple(x)
+
 
 def scalar(x):
-    return x.item() if hasattr(x,'item') else x
+    import numpy as np
+    if isinstance(x,np.ndarray) and hasattr(x,'item') and np.size(x)==1:
+        return x.item()
+    else:
+        return x
 
 def get_filter(f):
     from xml.dom.minidom import parse, parseString

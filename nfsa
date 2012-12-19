@@ -1,7 +1,6 @@
 #!/usr/bin/python
 
-
-def get_labeling(id3):
+def get_annotations(opt,id3):
     from dataset import Variable
     import json
     from itertools import product
@@ -14,11 +13,68 @@ def get_labeling(id3):
     sport = Variable('sport')
 
     # some heuristics
-    f = open('flows/filters.json')
+    if not opt.annotations:
+        raise Exception('no annotation file specified')
+    f = open(opt.annotations)
+    filters = json.load(f)
+    labeling3 = {}
+    labeling2 = {}
+    labeling = {}
+    i = 1
+    for f in filters:
+        for k in ('dstIPs','dstPorts','srcIPs','dstPorts'):
+            if k not in f:
+                f[k] = []
+        if 'fileName' in f:
+            annot = '%s (%s)' %(f['fileName'],f['annotation'])
+        else:
+            annot = f['annotation']
+        if f['type'] not in labeling2:
+            labeling2[annot] = i
+            labeling3[i] = f['type']
+            i += 1
+        a = labeling2[annot]
+        if f['dstIPs'] and f['dstPorts'] and f['srcIPs']:
+            for d,dp,s in product(f['dstIPs'],f['dstPorts'],f['srcIPs']):
+                for r in id3.select((src==ip2int(s))&(dst==ip2int(d))&(dport==dp),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['dstIPs'] and f['dstPorts']:
+            for d,dp in product(f['dstIPs'],f['dstPorts']):
+                for r in id3.select((dst==ip2int(d))&(dport==dp),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['dstIPs']:
+            for d in f['dstIPs']:
+                for r in id3.select((dst==ip2int(d)),fields=('flow',)):
+                    labeling[scalar(r)] = a
+        elif f['srcIPs']:
+            for d in f['srcIPs']:
+                for r in id3.select((src==ip2int(d)),fields=('flow',)):
+                    labeling[scalar(r)] = a
+    return labeling,dict( (v,k) for k,v in labeling2.items() ), labeling3
+
+def get_labeling(opt,id3):
+    from dataset import Variable
+    import json
+    from itertools import product
+    from util import scalar,ip2int,int2ip
+
+    flow = Variable('flow')
+    src = Variable('src')
+    dst = Variable('dst')
+    dport = Variable('dport')
+    sport = Variable('sport')
+
+    # some heuristics
+    if not opt.annotations:
+        raise Exception('no annotation file specified')
+    f = open(opt.annotations)
     filters = json.load(f)
     labeling2 = {}
     labeling = {}
     for f in filters:
+        for k in ('dstIPs','dstPorts','srcIPs','dstPorts'):
+            if k not in f:
+                f[k] = []
         if f['type'] not in labeling2:
             if f['type'] == 'FILTER_LEGITIMATE':
                 labeling2[f['type']] = 1
@@ -43,6 +99,58 @@ def get_labeling(id3):
                 for r in id3.select((src==ip2int(d)),fields=('flow',)):
                     labeling[scalar(r)] = a
     return labeling,dict( (v,k) for k,v in labeling2.items() )
+def show_spectra(opt,h5=None):
+    from models import pipeline,freq_bands,freq_treshold
+    if not h5:
+        h5 = File(opt.database,'a')
+    if 'samples' not in h5:
+        raise Exception('no samples found')
+    samples = h5['samples']
+    for k in samples.keys():
+        if k.startswith('data'):
+            if  '.srate' not in samples[k] or '.wndsize' not in samples[k]:
+                continue
+            if samples[k]['.srate'].value !=  opt.srate  or  samples[k]['.wndsize'].value != opt.window:
+                continue
+            X = samples[k]['X'][:]
+            y = samples[k]['y'][:].squeeze()
+            freqs = samples[k]['freqs'][:].squeeze()
+            id = Dataset(h5=samples[k]['flowids'])
+            labeling,labeling2,labeling3 =  get_annotations(opt,id)
+            lab  = np.array([labeling.get(f) for f in y.squeeze()])
+            fnc = pipeline(freq_treshold(0), freq_bands(50))
+            for i in  labeling2:
+                if not (lab==i).any():
+                    continue
+                Xr,yr,freqr = fnc.fit(X[(lab==i) ,...],lab[(lab==i)],freqs)
+                freqr = freqr.squeeze()
+                fig(lambda ax: ax.bar(left=freqr[:-1],width=freqr[1:]-freqr[:-1],height=Xr.mean(0)),name=labeling2[i])
+def show_mahal(opt,h5=None):
+    from models import pipeline,freq_bands,freq_treshold
+    if not h5:
+        h5 = File(opt.database,'a')
+    if 'samples' not in h5:
+        raise Exception('no samples found')
+    samples = h5['samples']
+    for k in samples.keys():
+        if k.startswith('data'):
+            if  '.srate' not in samples[k] or '.wndsize' not in samples[k]:
+                continue
+            if samples[k]['.srate'].value !=  opt.srate  or  samples[k]['.wndsize'].value != opt.window:
+                continue
+            X = samples[k]['X'][:]
+            y = samples[k]['y'][:].squeeze()
+            freqs = samples[k]['freqs'][:].squeeze()
+            id = Dataset(h5=samples[k]['flowids'])
+            labeling,labeling2,labeling3 =  get_annotations(opt,id)
+            lab  = np.array([labeling.get(f) for f in y.squeeze()])
+            fnc = pipeline(freq_treshold(0), freq_bands(50))
+            for i in  labeling2:
+                if not (lab==i).any():
+                    continue
+                Xr,yr,freqr = fnc.fit(X[(lab==i) ,...],lab[(lab==i)],freqs)
+                freqr = freqr.squeeze()
+                fig(lambda ax: ax.bar(left=freqr[:-1],width=freqr[1:]-freqr[:-1],height=Xr.mean(0)),name=labeling2[i])
 def get_raw(opt, callback=None, keys=(), h5=None):
     from extractor import PcapExtractor,FlowExtractor
     from os.path import isfile,basename
@@ -85,6 +193,7 @@ def get_raw(opt, callback=None, keys=(), h5=None):
 def get_flow(opt, h5 = None):
     from util import timedrun
     from flowizer import Flowizer
+    from operator import add
 
     result = [[],()]
     def process(data,flowize,postfix=''):
@@ -124,7 +233,7 @@ def get_flow(opt, h5 = None):
     else:
         raise NotImplementedError('in_format')
 
-    flowize = timedrun(Flowizer(fields = fields,fflow=fflow,bflow=bflow))
+    flowize = timedrun(Flowizer(fields = fields,fflow=fflow,bflow=bflow,opt=opt))
 
     if not tr:
         fl = h5.require_group(flowid)
@@ -132,7 +241,7 @@ def get_flow(opt, h5 = None):
         get_raw(opt,lambda x,fn:process(x,flowize,fn),keys=keys)
     else:
         try:
-            data = reduce(lambda x,y:x+y,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
+            data = reduce(add,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
             process(data,flowize)
         except MemoryError:
             for k in sorted(tr.keys()):
@@ -147,6 +256,8 @@ def get_samples(opt, h5= None):
     from sys import stdout
     from itertools import product
     from h5py import File
+    from operator import add
+    from util import flow2str,scalar
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -180,11 +291,19 @@ def get_samples(opt, h5= None):
         if 'data' in fl3:
             flows3 = Dataset(h5=fl3['data'])
         else:
-            flows3 = reduce(lambda x,y:x+y,(Dataset(h5=fl3[k]) for k in fl3.keys() if k.split('_',1)[0] == 'data') )
+            keys = [k for k in fl3.keys() if k.startswith('data_')]
+            if keys:
+                flows3 = reduce(add,(Dataset(h5=fl3[k]) for k in keys) )
+            else:
+                print '## no flow data in h5 database, trying to get it from raw files'
+                if not opt.file:
+                    raise Exception('No flow data specified. Try to specify some pcap or netflow files on command line.')
+                flows3,id3 = get_flow(opt,h5 = h5)
+                flows3 = reduce(add, flows3 )
         id3 = Dataset(h5=fl3['flowid'])
     else:
         flows3,id3 = get_flow(opt,h5 = h5)
-        flows3 = reduce(lambda x,y:x+y, flows3 )
+        flows3 = reduce(add, flows3 )
 
     samples = h5.require_group('samples')
 
@@ -199,7 +318,7 @@ def get_samples(opt, h5= None):
         flow =  Variable('flow')
         time =  Variable('time')
 
-        sampl = samples.require_group('data%s_%f_%d'%(xsdfnc.__name__,srate,wndsize))
+        sampl = samples.require_group('data_%s_%f_%d'%(xsdfnc.__name__,srate,wndsize))
 
         if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
             raise Exception('already processed for different srate and wndsize')
@@ -210,10 +329,8 @@ def get_samples(opt, h5= None):
         ips = {}
 
         # some colorful sugar
-        scalar = lambda x: x.item() if hasattr(x,'item') else x
-        ipfmt = lambda i: '%s:* > %s:%d [%s]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
-        ipfmt2 = lambda i: '%s:%d [%s]' % (int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
-        ipfmtc = lambda i: '\033[32m%s\033[0m:\033[33m*\033[0m > \033[32m%s\033[0m:\033[33m%d\033[0m [\033[1;32m%s\033[0m]' % (int2ip(i[1]),int2ip(i[2]),i[3],reverseDns(int2ip(i[2])))
+        ipfmt = lambda i: flow2str(i,dns=opt.reverse_dns,services=opt.reverse_dns, color=False)
+        ipfmtc = lambda i: flow2str(i,dns=opt.reverse_dns,services=opt.reverse_dns, color=True)
 
         stdout.write('\n')
         stdout.flush()
@@ -234,10 +351,10 @@ def get_samples(opt, h5= None):
             if f not in flows:
                 continue
 
-            ip = tuple(scalar(id3row[i]) for i in ('flow', 'src','dst','dport'))
-            ips[f] = ipfmt(ip)
+            ips[f] = ipfmt(id3row)
 
-            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, \033[36mprocessing flow\033[0m: %s  '%(100.*l/len(flows),srate,ipfmtc(ip)))
+            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m, \033[36mprocessing flow\033[0m: %s  '%
+                         (100.*l/len(flows),srate,wndsize,ipfmtc(id3row)))
             stdout.flush()
             l += 1
 
@@ -300,15 +417,15 @@ def get_samples(opt, h5= None):
                 spectrums[f] = spectrum
                 wids[f] = np.array(wid)
                 if unused:
-                    stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),unused,pkts))
+                    stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),unused,pkts))
                 else:
-                    stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
+                    stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),pkts))
             else:
-                stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(ip),pkts))
-            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz   '%(100.*l/len(flows),srate))
+                stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),pkts))
+            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m   '%(100.*l/len(flows),srate,wndsize))
             stdout.flush()
 
-        stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz    '% srate)
+        stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m           \n'% (srate,wndsize))
         stdout.flush()
 
         if len(spectrums):
@@ -330,6 +447,50 @@ def get_samples(opt, h5= None):
             sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
 
 
+def annotate(opt, h5=None):
+    from util import flow2str,scalar
+    from operator import add
+    from sys import stdout
+    import json
+
+    def feedback(i):
+        types = {'2':'FILTER_MALICIOUS','1':'FILTER_LEGITIMATE', '0': None}
+        input = ()
+        while len(input)!=2 or input[0].strip() not in types:
+            input = raw_input('%s ? '%flow2str(i,dns=True,services=True)).split(',',1)
+        return {'type':types.get(input[0].strip()),'annotation':input[1],'data':i}
+
+    if not h5 :
+        h5 = File(opt.database,'a')
+
+    if opt.flowid == '3':
+        flowid = 'flows3'
+    elif opt.flowid == '4':
+        flowid = 'flows4'
+    else:
+        raise NotImplementedError('flowid')
+
+    d  =Dataset(h5= h5['%s/flowid'%flowid] )
+    data = reduce(add,  (Dataset(h5=h5['%s/%s'%(flowid,k)]) for k in h5['flows3'].keys() if k.startswith('data')))
+    flows = [i for i in reversed(sorted(((i,len(data[data.flow==i['flow']])) for i in d),key=lambda x: x[-1]))]
+    min_packets =  opt.min_packets if opt.min_packets else 100
+    flows = [i for i,c in flows if c>min_packets]
+    print '## %d records to annotate'%len(flows)
+    filt = [feedback(i) for i in sorted(flows,key=lambda x: x['dport'])]
+    filt2 = [
+        {
+            'dstIPs':list(set( int2ip(scalar(j['data']['dst'])) for j in filt if j['annotation'] == a)),
+            'dstPorts':list(set( scalar(j['data']['dport']) for j in filt if j['annotation'] == a)),
+            'annotation':a,
+            'type':t
+        } for a,t in set((i['annotation'],i['type']) for i in filt)
+    ]
+    try:
+        out = open(opt.out_file,'w') if  opt.out_file else stdout
+    except :
+        out =  stdout
+    json.dump(filt2,out)
+
 def opts(args=None):
     from argparse import ArgumentParser
     from sys import argv
@@ -337,7 +498,7 @@ def opts(args=None):
 
     if not args: args = argv[1:]
 
-    actions = ('raw','flow','sample','model','filter', 'load')
+    actions = ('raw','flow','sample','model','filter', 'load', 'annotate')
     flowids  = ('3','4')
     transforms  = ('csd','psd')
     filetypes  = ('pcap','netflow')
@@ -357,12 +518,17 @@ def opts(args=None):
 
     parser.add_argument('-f', dest='in_format',choices=filetypes, metavar='(%s)'%('|'.join(filetypes)), help='input file format')
     parser.add_argument('-o', dest='out_file', metavar='<output file>', help='output file')
+    parser.add_argument('-m', dest='min_packets', metavar='<min packets>', type=int, help='min packets per flow')
+    parser.add_argument('-n', dest='reverse_dns', action='store_false', help='don`t do reverse dns')
+
     group = parser.add_mutually_exclusive_group()
     group.add_argument('-v', '--verbose', dest='verbosity', action='count', help='increase verbosity')
     group.add_argument('-q', '--quiet', dest='verbose', action='store_false', help='do not dump to terminal')
 
     group= parser.add_argument_group('Flow extraction options', 'Required for "flow", "sample" and "model" actions')
     group.add_argument('-i', dest='flowid',choices=flowids, metavar='(%s)'%('|'.join(flowids)), help='flow identification (3-tuple or 4-tuple)')
+    group.add_argument('-u', dest='usesyns', action='store_true', help='don`t use SYN packets to distinguish flow start')
+    group.add_argument('-p', dest='protocol', type=int, help='protocol to take in account, default = 6 (TCP)')
 
     group = parser.add_argument_group('Sampling options', 'Required for "sample" and "model" actions')
     group.add_argument('-s', dest='srate', metavar='<sample rate>',action='append',type=float,help='sample rate to use, can be specified multiple times')
@@ -370,11 +536,11 @@ def opts(args=None):
     group.add_argument('-t', dest='transform', metavar='(%s)'%('|'.join(transforms)), choices=transforms,help=''\
           'tranformation to use, can be: "csd" for cross spectral density or "psd" for power spectral density')
 
-
     group = parser.add_argument_group('Model estimation options', 'Required for "model" action')
+    group.add_argument('-a', dest='annotations', metavar='<file>', help='annotation file')
     #group.add_argument()
 
-    parser.set_defaults(verbose=True,verbosity=0)
+    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=False,protocol=6)
 
     #parser.print_help()
     longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
@@ -405,9 +571,11 @@ if __name__=='__main__':
     import numpy as np
     from dataset import Dataset
     from h5py import File
+    import util
+    import models
 
     opt, longopts, shortopts = opts()
-    NotImplementedError = lambda s: ValueError('Choice %s%s not implemented'%(longopts.get(s)+'=' or shortopts.get(s)+' ',getattr(opt,s)))
+    NotImplementedError = lambda s: ValueError('Choice %s %s not implemented'%(longopts.get(s) or shortopts.get(s),getattr(opt,s)))
 
 
     if opt.action == 'filters':
@@ -431,6 +599,11 @@ if __name__=='__main__':
         get_raw(opt,h5=File(opt.database,'a'))
         exit()
 
+    elif opt.action == 'annotate':
+
+        annotate(opt,h5=File(opt.database,'a'))
+        exit()
+
     elif opt.action == 'flow':
 
         get_flow(opt, h5 = File(opt.database,'a'))
@@ -442,11 +615,11 @@ if __name__=='__main__':
         exit()
 
     elif opt.action == 'model':
+        from models import freq_treshold,freq_bands,freq_momentum,freq_sdev,freq_low_hi,pca,scale,gmm
         h5 = File(opt.database,'a')
         def get_sampl(i):
             from dataset import Variable
-            dport =  Variable('dport')
-            sampl = h5[i]
+            sampl = samples[i]
 
             srate = sampl['.srate'].value
             wndsize = sampl['.wndsize'].value
@@ -457,131 +630,12 @@ if __name__=='__main__':
 
             id3 = Dataset(h5=sampl['flowids'])
 
-            #web = (id3.select((dport==80)|(dport==443), fields=('flow',))).squeeze().tolist()
-            #ssh = (id3.select((dport==22), fields=('flow',))).squeeze().tolist()
-            #web.remove(4776559292263195127)
-            #vpn = [4776559292263195127]
-            #rtmp = [8380189417275335324]
-            # some heuristics
-
-            labeling,labeling2 = get_labeling(id3)
-
-            print labeling2
-
-            #labeling2 = {2:'ssh',4:'vpn',1:'web',3:'rtmp', None: 'unknown'}
-            #labeling = dict((i,k) for k,v in {2 : [-552256902917098113,2247007671922456841],4:[4776559292263195127],1:[8380160408752905696,8380189416172033921,8410733012134650723,-469218773793942506,-2499874899238919737,-5041250675964824658,8580894899495251662,-4947266290287076305,-6617676552486822384,3553172765770232670,4958930730188020726,8698986197344828920,-2289429955555002898,-7120599107837071846,-8123220270916674052,3968969310196917918],3:[8380189417275335324]}.items() for i in v)
-            #labeling = dict((i,k) for k,v in {2 :ssh,4:vpn,1:web, 3:rtmp}.items() for i in v)
+            labeling,labeling2 = get_labeling(opt,id3)
 
             labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
 
-            return X,np.array([[labeling.get(f) for f in y.squeeze()]]),freqs
+            return X,np.array([[labeling.get(f) for f in y.squeeze()]]),freqs,srate,wndsize
 
-        class FitError(Exception):
-            pass
-        class base:
-            def __init__(self, **kwargs):
-                self.__dict__.update(kwargs)
-            def _process(self, X, y, freqs):
-                return X, y, freqs
-            def fit(self, X, y, freqs):
-                return self._process(X, y, freqs)
-            def score(self,X,y, freqs):
-                return self._process(X, y, freqs)
-        class scale(base):
-            def __init__(self, mean=True, std=True, **kwargs):
-                base.__init__(self, mean=mean, std=std, **kwargs)
-                self.scaler = None
-            def fit(self, X, y, freqs):
-                from sklearn.preprocessing import Scaler
-                self.scaler = Scaler(with_mean=self.mean,with_std=self.std,copy=True)
-                self.scaler.fit(X)
-                return self.scaler.transform(X),y,freqs
-            def score(self,X,y, freqs):
-                return self.scaler.transform(X),y,freqs
-        class freq_treshold(base):
-            def __init__(self, f_thresh,  **kwargs):
-                base.__init__(self, f_thresh=f_thresh, **kwargs)
-            def _process(self, X, y, freqs):
-                import numpy as np
-                i = freqs.squeeze()>self.f_thresh
-                return X[...,i],y,freqs[...,i]
-        class freq_bands(base):
-            def __init__(self, n_bands, **kwargs):
-                base.__init__(self, n_bands=n_bands, **kwargs)
-            def _process(self, X, y, freqs):
-                import numpy as np
-                n_samples = X.shape[0]
-                bands = np.linspace(freqs.min(),freqs.max(),num=self.n_bands+1, endpoint=True)[np.newaxis,...]
-                Xm = X[...,np.newaxis].repeat(self.n_bands,2)
-                mask = (((bands[...,:-1]<=freqs[...,np.newaxis]) & (bands[...,1:]>=freqs[...,np.newaxis])))[np.newaxis,...].repeat(n_samples,0)
-                return (Xm * mask).sum(1), y, bands
-        class freq_low_hi(base):
-            def __init__(self, f_thresh, **kwargs):
-                base.__init__(self, f_thresh=f_thresh, **kwargs)
-            def _process(self, X, y, freqs):
-                import numpy as np
-                n_samples = X.shape[0]
-                Xm = X[...,np.newaxis].repeat(2,2)
-                mask = np.hstack((freqs[...,np.newaxis] > self.f_thresh,freqs[...,np.newaxis] <= self.f_thresh))[np.newaxis,...].repeat(n_samples,0)
-                #mask = (((bands[...,:-1]<=freqs[...,np.newaxis]) & (bands[...,1:]>=freqs[...,np.newaxis])))[np.newaxis,...].repeat(n_samples,0)
-                return (Xm * mask).sum(1), y, None
-        class freq_sdev(base):
-            def __init__(self, dummy, **kwargs):
-                base.__init__(self, **kwargs)
-            def _process(self, X, y, freqs):
-                import numpy as np
-                return X.std(1), y, None
-        class pca(base):
-            def __init__(self, ndim, **kwargs):
-                base.__init__(self, ndim=ndim, **kwargs)
-                self.pca = None
-            def fit(self, X, y, freqs):
-                from sklearn.decomposition import PCA
-                from scipy.linalg import LinAlgError
-                self.pca = PCA(self.ndim)
-                try:self.pca.fit(X)
-                except LinAlgError: raise FitError()
-                return self.pca.transform(X),y,freqs
-            def score(self,X,y, freqs):
-                return self.pca.transform(X),y,freqs
-        class gmm(base):
-            def __init__(self, lbl, **kwargs):
-                from sklearn.mixture import DPGMM as GMM
-                base.__init__(self, lbl=lbl, **kwargs)
-                self.model = GMM(5, covariance_type='full', n_iter=100, params='mc', init_params='mc')
-            def _process(self, X, y, freqs):
-                y = np.copy(y)
-                i = y.squeeze() == self.lbl
-                y[...,i] = 1
-                y[...,~i] = -1
-                return X, y, freqs
-            def fit(self, X, y, freqs):
-                X, y, freqs = self._process(X, y, freqs)
-                self.model.fit(X[y.squeeze() == 1,...])
-                return X,y,freqs
-            def score(self,X,y, freqs):
-                from sklearn.metrics import roc_curve,auc
-                X, y, freqs = self._process(X, y, freqs)
-                score_raw = self.model.score(X)
-                fpr, tpr, thresholds = roc_curve(y.squeeze(), score_raw)
-                return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
-        class pipeline(base):
-            def __init__(self, *args, **kwargs):
-                base.__init__(self,**kwargs)
-                self.callables = args
-            def _process(self,X,y,freqs,**kwargs):
-                callables = kwargs.get('callables') if 'callables' in kwargs else self.callables
-                for c in callables:
-                    X, y, freqs = c.fit(X, y, freqs)
-                return X, y, freqs
-            def fit(self, X, y, freqs):
-                for c in self.callables:
-                    X, y, freqs = c.fit(X, y, freqs)
-                return X, y, freqs
-            def score(self, X, y, freqs):
-                for c in self.callables:
-                    X, y, freqs = c.score(X, y, freqs)
-                return X, y, freqs
 
         def iterate(name, *args):
             from itertools import product
@@ -605,28 +659,37 @@ if __name__=='__main__':
             return np.array(s),d
         try:
             methods = {}
-            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,3,5,10,20,30)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,5,10)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            #methods.update(iterate( 'sdev', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (2,3,4)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             methods.update(iterate( 'pca', ( freq_treshold, (0,)) ,  ( pca, (3,5,7)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            for k in (k for k in h5.keys() if k.startswith('samples_')):
-            #for srate in (0.0033,):#(200,500,1000):
-                srate= float(k.split('_')[1])
-                print 'srate=%fHz'%srate
-                X, y, freqs = get_sampl(k)
-                f = []
-                n = []
-                scores = []
-                for p,meth in methods.items():
-                    s,d = crossval(meth, X, y, freqs)
-                    name = '\t%s: score (mean=%f, std=%f)' % (','.join('%s(%d)'%n for n in p), s.mean(), s.std())
-                    f += d[0],
-                    n += 'srate=%f, %s' % (srate,'%s(%d)' % p[1]),
-                    scores += s,
-                    print name
-                def plotline(x,y):
-                    return lambda ax: ax.plot(x, y, '-')
-                fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
+            #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            samples = h5['samples']
+            for k in samples.keys():
+                try:
+                    if not k.startswith('data'):
+                        continue
+                    X, y, freqs, srate, wndsize = get_sampl(k)
+                    if srate not in opt.srate or wndsize not in opt.window:
+                        continue
+                    print 'srate=%fHz, wndsize=%dsamps'%(srate,wndsize)
+                    f = []
+                    n = []
+                    scores = []
+                    for p,meth in methods.items():
+                        s,d = crossval(meth, X, y, freqs)
+                        name = '\t%s: score (mean=%f, std=%f)' % (','.join('%s(%d)'%n for n in p), s.mean(), s.std())
+                        f += d[0],
+                        n += 'srate=%f, %s' % (srate,'%s(%d)' % p[1]),
+                        scores += s,
+                        print name
+                    def plotline(x,y):
+                        return lambda ax: ax.plot(x, y, '-')
+                    fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
+                except Exception as e:
+                    print e
+                    #raise
         finally:
             h5.close()
     elif opt.action == 'feature':
@@ -667,7 +730,7 @@ if __name__=='__main__':
                 from sklearn.decomposition import PCA
                 t = PCA(ndim)
                 def fnc(X):
-                    t.fit(X[labels.squeeze().nonzero()[0],...])
+                    t.fit(X[labels.squeeze()==1,...])
                     return t.transform(X)
                 return fnc
             def lowhitransform(srate, wndsize, fthresh=50):

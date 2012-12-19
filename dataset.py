@@ -18,6 +18,8 @@ class Dataset(object):
             self.fields = tuple(fields)
         else:
             raise Exception('no data')
+        for f in self.fields:
+            setattr(self,f,Variable(f))
     def __add__(self,other):
         """add two dataset objects. Must have same shape and fields."""
         from numpy import vstack
@@ -31,13 +33,32 @@ class Dataset(object):
         return self.data.shape[0]
     def __getitem__(self, key):
         if isinstance(key, tuple):
-            return self.select(None,fields=key)
+            predicate = key[0] if isinstance(key[0],Predicate) else None
+            fields = key[1:] if isinstance(key[0],Predicate) else key
+            return self.select(predicate,fields=fields,retdset=isinstance(key[0],Predicate))
+        elif isinstance(key,Predicate):
+            return self.select(key,retdset=True)
         else:
             return self.select(None,fields=(key,))
     def __delitem__(self, key):
-        self.retain_fields(tuple(f for f in self.fields if f!=key))
+        if isinstance(key, tuple):
+            predicate = key[0] if isinstance(key[0],Predicate) else None
+            fields = key[1:] if isinstance(key[0],Predicate) else key
+            self.data = self.select(predicate,retdset=False)
+            self.retain_fields(tuple(f for f in self.fields if f not in fields))
+        elif isinstance(key,Predicate):
+            self.data = self.select(key,retdset=False)
+        else:
+            self.retain_fields(tuple(f for f in self.fields if f not in key))
     def __setitem__(self,key, value):
-        return self.set_fields(None, key, value)
+        if isinstance(key, tuple):
+            if len(key) > 2 :
+                raise ValueError('expecting optional predicate to filter rows and strig to denote column')
+            predicate = key[0] if isinstance(key[0],Predicate) else None
+            field = key[1] if isinstance(key[0],Predicate) else key
+            return self.set_fields(predicate, field, value)
+        else:
+            return self.set_fields(None, key, value)
     def __contains__(self,item):
         return item in self.fields
     def __iter__(self):
@@ -167,26 +188,34 @@ class Or(Term):
         return fnc(arg,self.field) | self.value
 class In(Term):
     def __call__(self,arg, fnc):
+        from operator import or_
         d = fnc(arg,self.field) if callable(fnc) else fnc
-        return reduce(lambda x,y: x|y, (i==d for i in self.value))
+        return reduce(or_, (i==d for i in self.value))
 
 class Binary(Predicate):
-    def __init__(self, *args):
+    def __init__(self, reduction, *args):
         super(Binary, self).__init__()
         argsg = (a.preds if isinstance(a,self.__class__) else (a,) for a in args)
         self.preds = tuple(i for sub in argsg for i in sub)
-    def reduction(self, x, y):
-        raise Exception('Not implemented')
+        self.reduction = reduction if reduction else tuple
     def __call__(self, arg, fnc):
         return reduce(self.reduction, (p(arg,fnc) if callable(p) else p for p in self.preds))
 class Conj(Binary):
-    def reduction(self,x,y): return x&y
+    def __init__(self, *args):
+        from operator import and_
+        super(Conj, self).__init__(and_,*args)
 class Dis(Binary):
-    def reduction(self,x,y): return x|y
+    def __init__(self, *args):
+        from operator import or_
+        super(Dis, self).__init__(or_,*args)
 class Xor(Binary):
-    def reduction(self,x,y): return x^y
+    def __init__(self, *args):
+        from operator import xor
+        super(Xor, self).__init__(xor,*args)
 class Equ(Binary):
-    def reduction(self,x,y): return x==y
+    def __init__(self, *args):
+        from operator import eq
+        super(Equ, self).__init__(eq,*args)
 
 class Variable(object):
     """Used to build and predicate instance."""

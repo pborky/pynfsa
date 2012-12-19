@@ -8,13 +8,16 @@ def psd(w, bounds, filter=None):
     from scipy.signal import  correlate
     from scipy.fftpack import fft
     import numpy as np
-    if callable(filter):
-        allpkts = w['time'][np.newaxis,...][...,filter(w),...]
+    if filter:
+        allpkts = w[filter,'time'][np.newaxis,...]
     else:
         allpkts = w['time'][np.newaxis,...]
     amp = ((allpkts[...,0] >= bounds[:-1,...]) & (allpkts[...,0] < bounds[1:,...]))
     if 'packets' in w:
-        packets = w['packets'][np.newaxis,...]
+        if filter:
+            packets = w[filter,'packets'][np.newaxis,...]
+        else:
+            packets = w['packets'][np.newaxis,...]
         amp = (amp*packets[...,0]).sum(1)
     else:
         amp = amp.sum(1)
