@@ -549,7 +549,7 @@ def opts(args=None):
     group.add_argument('-a', dest='annotations', metavar='<file>', help='annotation file')
     #group.add_argument()
 
-    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=False,protocol=6)
+    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6)
 
     #parser.print_help()
     longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
