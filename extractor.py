@@ -1,17 +1,6 @@
 
 class Extractor(object):
     """Used for extraction of various attributes of raw data. """
-
-    @staticmethod
-    def ip2int(ip):
-        """convert string IPv4 address to int"""
-        from util import ip2int
-        return ip2int(ip)
-    @staticmethod
-    def int2ip(ip):
-        """convert int to string IPv4 address"""
-        from util import int2ip
-        return int2ip(ip)
     def __init__(self, fields):
         """construct Extrator callable that return fields."""
         self.fields = tuple(fields)
@@ -20,14 +9,15 @@ class PcapExtractor(Extractor):
     """Used for extraction of attributes from PCAP data. """
     def __call__(self, pkt):
         from impacket.ImpactPacket import IP,TCP,UDP,ICMP,Data
-        #from numpy import int64
+        from util import ip2int,int2ip
+
         if (IP not in pkt) or (TCP not in pkt and UDP not in pkt):
             return None
         ip = pkt[IP]
         result = {
             'time':int(pkt.get_timestamp()*1e6),
-            'src': Extractor.ip2int(ip.get_ip_src()),
-            'dst': Extractor.ip2int(ip.get_ip_dst()),
+            'src': ip2int(ip.get_ip_src()),
+            'dst': ip2int(ip.get_ip_dst()),
             'paylen': ip.get_ip_len() - 4*ip.get_ip_hl(),
             'sport': 0,
             'dport': 0,
@@ -55,14 +45,14 @@ class TraceExtractor(Extractor):
     """Used for extraction of attributes from TCP and UDP packet trace data. """
     def __call__(self, p):
         from scapy.all import IPv6,IP,TCP,UDP
-        from numpy import int64
+        from util import ip2int,int2ip
         if (IP not in p) or (TCP not in p and UDP not in p):
             return None
         ip = p[IP] if IP in p else p[IPv6]
         result = {
             'time':int(p.time*1e6),
-            'src': Extractor.ip2int(ip.src),
-            'dst': Extractor.ip2int(ip.dst),
+            'src': ip2int(ip.src),
+            'dst': ip2int(ip.dst),
             'paylen': 0,
             'sport': 0,
             'dport': 0,
@@ -140,13 +130,14 @@ class FlowExtractor(Extractor):
     def __call__(self, line):
         """Invoke extrat on one line returning field containting tuple of fields.
         """
+        from util import ip2int,int2ip
         try:
             time,dur,proto,src,sport,dst,dport,flags,tos,packets,size,flows = self.pt.match(line).groups()
             data = {
                 ## temporal atributes
                 'time': self._conv_time(time),'duration':self._conv_duration(dur), #microseconds
                 ## spatial atributes
-                'src': self.ip2int(src), 'dst':self.ip2int(dst),
+                'src': ip2int(src), 'dst':ip2int(dst),
                 'sport':int(float(sport)),'dport':int(float(dport)),
                 ## other atributes
                 'proto':self._conv_proto(proto),'flags':self._conv_flags(flags), 'tos':int(tos),
