@@ -137,6 +137,66 @@ class Dataset(object):
     def save(self,h5):
         h5.create_dataset('data', data = self.data,compression='gzip')
         h5.create_dataset('fields', data = self.fields,compression='gzip')
+
+class Loader(object):
+    def __init__(self,opt, name=None):
+        from h5py import File
+        fn = name if name else opt.database
+        self.h5 = File(fn,'a')
+        self.opt = opt
+    def _get_groups(self,item = None):
+        from h5py import Group
+        groups = []
+        starts = []
+        def append_groups(grp):
+            import re
+            grp = self.h5[grp]
+            if not (isinstance(grp,Group) and 'fields' in grp):
+                return
+            if item and ( grp.name.endswith(item) or re.sub(r'[^\w]','_',grp.name).endswith(item) ):
+                return grp
+            if item and (grp.name.startswith(item) or re.sub(r'[^\w]','_',grp.name).startswith(item) ):
+                starts.append(grp)
+            groups.append(grp)
+        grp = self.h5.visit(append_groups)
+        if grp:
+            return grp
+        if starts:
+            return starts
+        if item:
+            return
+        return groups
+    def close(self):
+        self.h5.close()
+    def keys(self):
+        return [i.name for i in self._get_groups()]
+    def __getitem__(self, item):
+        grp = self._get_groups(item)
+        if isinstance(grp,list):
+            return grp
+        return Dataset(h5=grp)
+    def __delitem__(self, key):
+        del self.h5[key]
+    def __setitem__(self, key, value):
+        if not isinstance(value,Dataset):
+            raise ValueError('Expecting dataset instance')
+        value.save(self.h5.require_group(key))
+    def __getattribute__(self, item):
+        try:
+            return super(Loader, self).__getattribute__(item)
+        except AttributeError:
+            grp = self[item]
+            if grp: return grp
+            raise
+    def handle_exit(self,fnc):
+        try:
+            fnc(self.opt,h5=self.h5)
+        finally:
+            self.close()
+        exit()
+
+
+
 ## convivence method for compsoting coditions.
 class Predicate(object):
     def __call__(self,arg, fnc):

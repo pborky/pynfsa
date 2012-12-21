@@ -71,32 +71,62 @@ class pca(base):
         from sklearn.decomposition import PCA
         from scipy.linalg import LinAlgError
         self.pca = PCA(self.ndim)
-        try:self.pca.fit(X)
+        try:self.pca.fit(X[y.squeeze()<0,...])
         except LinAlgError: raise FitError()
         return self.pca.transform(X),y,freqs
     def score(self,X,y, freqs):
         return self.pca.transform(X),y,freqs
-class gmm(base):
+class mahal(base):
     def __init__(self, lbl, **kwargs):
         from sklearn.mixture import DPGMM as GMM
+        from sklearn.covariance import EmpiricalCovariance, MinCovDet
         base.__init__(self, lbl=lbl, **kwargs)
-        self.model = GMM(5, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
-    def _process(self, X, y, freqs):
-        y = np.copy(y)
-        i = y.squeeze() == self.lbl
+        self.model = MinCovDet()
+        #self.model = GMM(1, covariance_type='diag', n_iter=100, params='wmc', init_params='wmc')
+    def _labeling(self, X, y, freqs):
+        import numpy as np
+        y = np.copy(y).squeeze()
+        model = np.abs([i for i in np.unique(y) if i < 0 and i is not None])
+        i = (y.squeeze()==model) | (y.squeeze()==-model)
+        j = ~i & (y.squeeze()!=0)
         y[...,i] = 1
-        y[...,~i] = -1
+        y[...,j] = -1
         return X, y, freqs
     def fit(self, X, y, freqs):
-        X, y, freqs = self._process(X, y, freqs)
-        self.model.fit(X[y.squeeze() == 1,...])
+        self.cov = self.model.fit(X[y.squeeze() < 0,...])
         #print 'model size : %s'  % str(self.model.means_.shape)
         return X,y,freqs
     def score(self,X,y, freqs):
         from sklearn.metrics import roc_curve,auc
-        X, y, freqs = self._process(X, y, freqs)
-        score_raw = self.model.score(X)
-        fpr, tpr, thresholds = roc_curve(y.squeeze(), score_raw)
+        X, y, freqs = self._labeling(X, y, freqs)
+        #score_raw = self.model.score(X[y.squeeze()!=0,...])
+        #score_raw = self.model.mahalanobis(X[y!=0,...]-X[y!=0,...].mean())
+        score_raw = self.model.mahalanobis(X[y.squeeze()!=0,...] - self.cov.location_) ** 0.33
+        fpr, tpr, thresholds = roc_curve(y[y.squeeze()!=0,...].squeeze(), score_raw)
+        return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
+class gmm(base):
+    def __init__(self, lbl, **kwargs):
+        from sklearn.mixture import DPGMM as GMM
+        base.__init__(self, lbl=lbl, **kwargs)
+        self.model = GMM(4, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
+    def _labeling(self, X, y, freqs):
+        import numpy as np
+        y = np.copy(y).squeeze()
+        model = np.abs([i for i in np.unique(y) if i < 0 and i is not None])
+        i = (y.squeeze()==model) | (y.squeeze()==-model)
+        j = ~i & (y.squeeze()!=0)
+        y[...,i] = 1
+        y[...,j] = -1
+        return X, y, freqs
+    def fit(self, X, y, freqs):
+        self.model.fit(X[y.squeeze() < 0,...])
+        #print 'model size : %s'  % str(self.model.means_.shape)
+        return X,y,freqs
+    def score(self,X,y, freqs):
+        from sklearn.metrics import roc_curve,auc
+        X, y, freqs = self._labeling(X, y, freqs)
+        score_raw = self.model.score(X[y.squeeze()!=0,...])
+        fpr, tpr, thresholds = roc_curve(y[y.squeeze()!=0,...].squeeze(), score_raw)
         return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
 class pipeline(base):
     def __init__(self, *args, **kwargs):
