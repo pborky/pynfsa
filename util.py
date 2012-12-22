@@ -13,6 +13,45 @@ def int2ip(ip):
     from ipaddr import IPAddress
     return IPAddress(ip).compressed
 
+def opengzip(fn,cb):
+    from tempfile import NamedTemporaryFile
+    from gzip import GzipFile
+    gzip = GzipFile(fn,'rb')
+    try:
+        tmp = NamedTemporaryFile('w+b')
+        try:
+            tmp.writelines(gzip)
+            tmp.flush()
+            cb(tmp.name)
+        finally:
+            tmp.close()
+    except:
+        cb(fn)
+    finally:
+        gzip.close()
+
+def get_netflow(fn, extractor):
+    def cb(data):
+        e = extractor(data)
+        if e is not None:
+            result.append(e)
+    def pcapopen(fn):
+        f = open(fn,'r')
+        try:
+            for line in f.readlines():
+                cb(line)
+        finally:
+            f.close()
+
+    result = []
+    try:
+        opengzip(fn,pcapopen)
+    except KeyError:
+        pass
+
+    return result
+
+
 def get_packets(fn,extractor):
     """Exctracts information from packets given by file name - 'fn'
     """
@@ -93,28 +132,11 @@ def get_packets(fn,extractor):
         except Exception as e:
             #print e
             pass
-    def opengzip(fn,cb):
-        from tempfile import NamedTemporaryFile
-        from gzip import GzipFile
-        gzip = GzipFile(fn,'rb')
-        try:
-            tmp = NamedTemporaryFile('w+b')
-            try:
-                tmp.writelines(gzip)
-                tmp.flush()
-                cb(tmp.name)
-            finally:
-                tmp.close()
-        finally:
-            gzip.close()
 
     result = []
     try:
         if fn:
-            try:
-                pcapopen(fn)
-            except:
-                opengzip(fn,pcapopen)
+            opengzip(fn,pcapopen)
         else:
             pcapopen()
 

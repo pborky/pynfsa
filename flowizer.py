@@ -12,19 +12,13 @@ class Flowizer(object):
         self.usesyns = opt.usesyns if opt else usesyns
     def __call__(self, data, flowids=None):
         from numpy import array,abs
-        from dataset import Variable,Dataset
+        from dataset import Dataset
         from util import scalar,int2ip,flow2str
         from sys import stdout
-        variables = dict((k,Variable(k))for k in ('src','sport','dst','dport'))
-
-        paylen =  Variable('paylen')
-        flags =  Variable('flags')
-        proto =  Variable('proto')
-        time =  Variable('time')
 
         flow2str2 =  lambda x,f: flow2str(x,f,dns=self.reverse_dns,services=self.reverse_dns)
 
-        pay = data.select((proto==self.protocol),order='time',retdset=True)
+        pay = data.select((data.proto==self.protocol),order='time',retdset=True)
         hashes = {} if flowids is None else dict((scalar(f['flow']),tuple(f[self.fflow])) for f in flowids)
         scalar = lambda x : x.item() if  hasattr(x,'item') else x
         negate = lambda x: -abs(x)
@@ -53,13 +47,13 @@ class Flowizer(object):
             else:
                 #print scalar(x['flags'])&18
                 if self.usesyns:
-                    if 'packets' in pay:  # we deal with netflow data and thus we demand SYN
+                    if 'packets' in pay:  # we deal with netflow data and thus we demand SYN and don`t care about ACK
                         syn = scalar(x['flags'])&2 == 2
                     else: # we deal with pcap data, so SYN packet is distinguishable
                         # we don`t care about SYN+ACK
                         syn = scalar(x['flags'])&18 == 2
                     if not syn:
-                        stdout.write( '\r****** no syn packet in %s (hash: %d)\n' % (flow2str2(t,self.fflow),h))
+                        stdout.write( '\r****** no syn packet in %s (hash: %d) (flags: %d)\n' % (flow2str2(t,self.fflow),h,scalar(x['flags']) ))
                         stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                         stdout.flush()
                         dropped += 1
@@ -82,7 +76,7 @@ class Flowizer(object):
         stdout.write( '\n%s\n'% [(int2ip(d),pd) for d,pd in droppedips])
         stdout.flush()
         if 'paylen' in pay:
-            pay = pay.select((paylen!=0),order=('time',),retdset=True, fields=self.fields)
+            pay = pay.select((pay.paylen!=0),order=('time',),retdset=True, fields=self.fields)
         else:
             pay = pay.select(None,order=('time',),retdset=True, fields=self.fields)
 

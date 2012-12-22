@@ -1,5 +1,56 @@
 __author__ = 'peterb'
 
+class H5File(object):
+    def __init__(self, opt, h5 = None, grp = None ):
+        from tables import openFile,File
+        if isinstance(h5,File):
+            self.h5 = h5
+        else:
+            self.h5 = openFile(opt.database,'a')
+        self.group = self.h5.root if grp is None else grp
+        self.opt = opt
+    def __contains__(self, item):
+        from tables import NoSuchNodeError
+        try:
+            self.h5.getNode(self.group,item)
+            return True
+        except NoSuchNodeError:
+            return False
+    def __delitem__(self, key):
+        self.h5.getNode(self.group,key)._f_remove(True)
+    def __getitem__(self, item):
+        from tables import Group,NoSuchNodeError
+        try:
+            item = self.h5.getNode(self.group,item)
+            if isinstance(item,Group):
+                result = H5File(self.opt,h5=self.h5, grp=item)
+                if 'data' in result and 'fields' in result:
+                    return Dataset(h5=result)
+                else:
+                    return result
+            else:
+                return item[:]
+        except NoSuchNodeError:
+            return H5File(self.opt, h5=self.h5, grp=self.h5.createGroup(self.group,item))
+    def __setitem__(self, key, value):
+        from tables import Group,NoSuchNodeError
+        key = key.split('/')
+        self.h5.createArray('%s/%s'%(self.group._v_pathname, '/'.join(key[:-1])),key[-1],value)
+    def keys(self):
+        return  [ g._v_pathname.split('/')[-1] for g in self.h5.listNodes(self.group) ]
+    def close(self):
+        self.h5.close()
+    def handle_exit(self, try_fnc, *arg,**kwarg):
+        if not callable(try_fnc):
+            raise ValueError()
+        try:
+            try_fnc(self.opt, h5 = self)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.close()
+        exit()
+
 class Dataset(object):
     """Encapsulation of the numpy array, in order to conviently select/update data.
     """
@@ -11,8 +62,8 @@ class Dataset(object):
         """
         from numpy import array,ndarray
         if h5 is not None:
-            self.data = h5['data'].value
-            self.fields = tuple(h5['fields'].value)
+            self.data = h5['data']
+            self.fields = tuple(h5['fields'])
         elif data is not None and fields is not None:
             self.data = data if isinstance(data,ndarray) else array(data)
             self.fields = tuple(fields)
@@ -135,8 +186,8 @@ class Dataset(object):
                 self.data[pred,idx] = value
         return self.data.shape[0] if predicate is None else pred.sum()
     def save(self,h5):
-        h5.create_dataset('data', data = self.data,compression='gzip')
-        h5.create_dataset('fields', data = self.fields,compression='gzip')
+        h5['data'] =  self.data
+        h5['fields'] =  self.fields
 
 class Loader(object):
     def __init__(self,opt, name=None):

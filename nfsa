@@ -104,6 +104,7 @@ def get_labeling(opt,id3):
     while model_legit is None:
         try: model_legit = bool(int(raw_input('model is normal: ')))
         except : pass
+    print model_legit
 
     classes = {}
     classes.update((i,1) for i in legit if i not in model)
@@ -161,7 +162,7 @@ def show_spectra(opt,h5=None):
             X = samples[k]['X'][:]
             y = samples[k]['y'][:].squeeze()
             freqs = samples[k]['freqs'][:].squeeze()
-            id = Dataset(h5=samples[k]['flowids'])
+            id = samples[k]['flowids']
             labeling,labeling2,labeling3 =  get_annotations(opt,id)
             lab  = np.array([labeling.get(f) for f in y.squeeze()])
             fnc = pipeline(freq_treshold(0), freq_bands(50))
@@ -188,7 +189,7 @@ def show_mahal(opt,h5=None):
             X = samples[k]['X'][:]
             y = samples[k]['y'][:].squeeze()
             freqs = samples[k]['freqs'][:].squeeze()
-            id = Dataset(h5=samples[k]['flowids'])
+            id = samples[k]['flowids']
             labeling,labeling2,labeling3 =  get_annotations(opt,id)
             lab  = np.array([labeling.get(f) for f in y.squeeze()])
             fnc = pipeline(freq_treshold(0), freq_bands(50))
@@ -201,26 +202,27 @@ def show_mahal(opt,h5=None):
 def get_raw(opt, callback=None, keys=(), h5=None):
     from extractor import PcapExtractor,FlowExtractor
     from os.path import isfile,basename
-    from util import get_packets
+    from util import get_packets,get_netflow
 
     if opt.in_format == 'pcap':
         extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
-        tr = h5.require_group('traces') if h5 else None
+        tr = h5['traces'] if h5 else None
         praser = get_packets
     elif opt.in_format == 'netflow':
         extract = FlowExtractor( ('time', 'duration','src','sport','dst','dport','proto', 'packets', 'size','flags', 'flows', 'flow') )
-        tr = h5.require_group('netflows')  if h5 else None
-        def praser(fn, extract):
-            f = open(fn,'r')
-            try: flows = f.readlines()
-            finally: f.close()
-            return filter(None,map(extract,flows))
+        tr = h5['netflows']  if h5 else None
+        praser = get_netflow
+        #def praser(fn, extract):
+        #    f = open(fn,'r')
+        #    try: flows = f.readlines()
+        #    finally: f.close()
+        #    return filter(None,map(extract,flows))
     else:
         raise NotImplementedError('in_format')
 
     if tr:
         if not callable(callback):
-            callback = lambda data,fn: data.save(tr.require_group(fn))
+            callback = lambda data,fn: data.save(tr[fn])
         if not keys:
             keys = tr.keys()
     else:
@@ -245,15 +247,15 @@ def get_flow(opt, h5 = None):
     result = [[],()]
     def process(data,flowize,postfix=''):
         print '## Extracting flows using %s-tuple'%opt.flowid
-        fl = h5.require_group(flowid)
-        q,f = flowize(data, Dataset(h5=fl['flowid'])) if 'flowid' in fl else flowize(data)
+        fl = h5[flowid]
+        q,f = flowize(data, fl['flowid']) if 'flowid' in fl else flowize(data)
         dataname= 'data_%s'%postfix if postfix else 'data'
-        for i in (dataname,'flowid'):
+        for i in (dataname,'flowids'):
             if i in fl:
                 del fl[i]
         print '## Storing matrices in %s...' % opt.database
-        f.save(fl.require_group(dataname))
-        q.save(fl.require_group('flowid'))
+        f.save(fl[dataname])
+        q.save(fl['flowids'])
         result[0].append(f)
         result[1] = q
 
@@ -283,27 +285,26 @@ def get_flow(opt, h5 = None):
     flowize = timedrun(Flowizer(fields = fields,fflow=fflow,bflow=bflow,opt=opt))
 
     if not tr:
-        fl = h5.require_group(flowid)
+        fl = h5[flowid]
         keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
         get_raw(opt,lambda x,fn:process(x,flowize,fn),keys=keys)
     else:
         try:
-            data = reduce(add,(Dataset(h5=tr[k]) for k in sorted(tr.keys()))  )
+            data = reduce(add,(tr[k] for k in sorted(tr.keys()))  )
             process(data,flowize)
         except MemoryError:
             for k in sorted(tr.keys()):
-                data = Dataset(h5=tr[k])
+                data = tr[k]
                 process(data,flowize,k)
     return tuple(result)
 
 def get_samples(opt, h5= None):
     #TODO -> sampler.oy
     from sampler import csd,psd
-    from dataset import Variable,Dataset
+    from dataset import Dataset,H5File
     from scipy.fftpack import fftfreq
     from sys import stdout
     from itertools import product
-    from h5py import File
     from operator import add
     from util import flow2str,scalar
 
@@ -332,28 +333,28 @@ def get_samples(opt, h5= None):
         raise ValueError('No window length specified.')
 
     if not h5:
-        h5 = File(opt.database,'a')
+        h5 = H5File(opt)
 
     if flowid in h5:
         fl3 = h5[flowid]
         if 'data' in fl3:
-            flows3 = Dataset(h5=fl3['data'])
+            flows3 = fl3['data']
         else:
             keys = [k for k in fl3.keys() if k.startswith('data_')]
             if keys:
-                flows3 = reduce(add,(Dataset(h5=fl3[k]) for k in keys) )
+                flows3 = reduce(add,(fl3[k] for k in keys) )
             else:
                 print '## no flow data in h5 database, trying to get it from raw files'
                 if not opt.file:
                     raise Exception('No flow data specified. Try to specify some pcap or netflow files on command line.')
                 flows3,id3 = get_flow(opt,h5 = h5)
                 flows3 = reduce(add, flows3 )
-        id3 = Dataset(h5=fl3['flowids'])
+        id3 = fl3['flowids']
     else:
         flows3,id3 = get_flow(opt,h5 = h5)
         flows3 = reduce(add, flows3 )
 
-    samples = h5.require_group('samples')
+    samples = h5['samples']
 
     for srate,wndsize in product(srates,windows) : #srates:
         if srate<=0 :
@@ -363,10 +364,7 @@ def get_samples(opt, h5= None):
         speriod = 1./ srate # sampling period in seconds
         wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
 
-        flow =  Variable('flow')
-        time =  Variable('time')
-
-        sampl = samples.require_group('data_%s_%f_%d'%(xsdfnc.__name__,srate,wndsize))
+        sampl = samples['data_%s_%f_%d'%(xsdfnc.__name__,srate,wndsize)]
 
         if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
             raise Exception('already processed for different srate and wndsize')
@@ -408,7 +406,7 @@ def get_samples(opt, h5= None):
 
             # select related packets
             #fl =  flows[(flows[...,2] == f ),...]
-            fl =  flows3.select(flow==f,retdset=True)
+            fl =  flows3[flows3.flow==f]
             tm = fl['time']
             mi = tm.min()
             ma = tm.max()
@@ -428,9 +426,9 @@ def get_samples(opt, h5= None):
 
                 #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
                 if 'paylen' in fl:
-                    w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','paylen'))
+                    w = fl[(fl.time>=k)&(fl.time<k+wndspan),'time','paylen']
                 else:
-                    w = fl.select((time>=k)&(time<k+wndspan),retdset=True,fields=('time','packets','size'))
+                    w = fl[(fl.time>=k)&(fl.time<k+wndspan),'time','packets','size']
 
                 if not len(w)>0:
                     unused += np.sum(w['packets']) if 'packets' in w else len(w)
@@ -484,15 +482,14 @@ def get_samples(opt, h5= None):
             y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
             #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
 
-            sampl.create_dataset('.srate',data=srate)
-            sampl.create_dataset('.wndsize',data=wndsize)
+            sampl['.srate'] = srate
+            sampl['.wndsize'] = wndsize
 
-            sampl.create_dataset('X',data=X)
-            sampl.create_dataset('y',data=y)
-            #sampl.create_dataset('A',data=ampl)
-            #sampl.create_dataset('wnds',data=wnds)
-            id3.save(sampl.require_group('flowids'))
-            sampl.create_dataset('freqs', data = fftfreq(wndsize-1,d=1./srate))
+            sampl['X'] = X
+            sampl['y'] = y
+            sampl['freqs'] = fftfreq(wndsize-1,d=1./srate)
+
+            id3.save(sampl['flowids'])
 
 
 def annotate(opt, h5=None):
@@ -501,6 +498,7 @@ def annotate(opt, h5=None):
     from util import flow2str,scalar
     from operator import add
     from sys import stdout
+    from dataset import H5File
     import json
 
     def feedback(i):
@@ -511,7 +509,7 @@ def annotate(opt, h5=None):
         return {'type':types.get(input[0].strip()),'annotation':input[1],'data':i}
 
     if not h5 :
-        h5 = File(opt.database,'a')
+        h5 = H5File(opt)
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -520,8 +518,8 @@ def annotate(opt, h5=None):
     else:
         raise NotImplementedError('flowid')
 
-    d  =Dataset(h5= h5['%s/flowid'%flowid] )
-    data = reduce(add,  (Dataset(h5=h5['%s/%s'%(flowid,k)]) for k in h5['flows3'].keys() if k.startswith('data')))
+    d  = h5['%s/flowids'%flowid]
+    data = reduce(add,  (h5['%s/%s'%(flowid,k)] for k in h5['flows3'].keys() if k.startswith('data')))
     flows = [i for i in reversed(sorted(((i,len(data[data.flow==i['flow']])) for i in d),key=lambda x: x[-1]))]
     min_packets =  opt.min_packets if opt.min_packets else 100
     flows = [i for i,c in flows if c>min_packets]
@@ -621,7 +619,7 @@ def opts(args=None):
 if __name__=='__main__':
     from util import ip2int,int2ip,reverseDns,fig
     import numpy as np
-    from dataset import Dataset,Loader
+    from dataset import Dataset,Loader,H5File
     from h5py import File
     import util
     import models
@@ -651,23 +649,23 @@ if __name__=='__main__':
 
     elif opt.action == 'load':
 
-        l = Loader(opt)
+        l = H5File(opt)
 
     elif opt.action == 'raw':
 
-        Loader(opt).handle_exit(get_raw)
+        H5File(opt).handle_exit(get_raw)
 
     elif opt.action == 'annotate':
 
-        Loader(opt).handle_exit(annotate)
+        H5File(opt).handle_exit(annotate)
 
     elif opt.action == 'flow':
 
-        Loader(opt).handle_exit(get_flow)
+        H5File(opt).handle_exit(get_flow)
 
     elif opt.action == 'sample':
 
-        Loader(opt).handle_exit(get_samples)
+        H5File(opt).handle_exit(get_samples)
 
     elif opt.action == 'model':
         #TODO -> model.py
@@ -698,11 +696,14 @@ if __name__=='__main__':
         try:
             methods = {}
             #methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,5,10,25))  , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,5,10))  , ( scale, (True,)) ,  ( mahal, (1,) ) ))
+            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (5,10))   ,  ( mahal, (0,) ) ))
+            methods.update(iterate( 'bands', ( freq_treshold, (0,)) ,  ( mahal, (0,) ) ))
+            methods.update(iterate( 'bands2', ( freq_treshold, (0,)) , ( freq_bands, (2,10))  ,  ( gmm, (5,) ) ))
             #methods.update(iterate( 'sdev', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (2,3,4)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (14,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (14,))  ,  ( mahal, (1,) ) ))
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'pca', ( freq_treshold, (0,)) ,  ( pca, (3,5,7)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( 'pca', ( freq_treshold, (0,)) ,  ( pca, (5,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             samples = h5['samples']
             for k in samples.keys():
@@ -723,7 +724,7 @@ if __name__=='__main__':
                     y = sampl['y'].value
                     freqs = sampl['freqs'].value
 
-                    id3 = Dataset(h5=sampl['flowids'])
+                    id3 = sampl['flowids']
 
                     labeling,labeling2,labeling3 = get_labeling(opt,id3)
 

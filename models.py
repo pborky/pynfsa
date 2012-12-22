@@ -17,7 +17,7 @@ class scale(base):
     def fit(self, X, y, freqs):
         from sklearn.preprocessing import Scaler
         self.scaler = Scaler(with_mean=self.mean,with_std=self.std,copy=True)
-        self.scaler.fit(X)
+        self.scaler.fit(X[y.squeeze()<0,...])
         return self.scaler.transform(X),y,freqs
     def score(self,X,y, freqs):
         return self.scaler.transform(X),y,freqs
@@ -56,13 +56,19 @@ class freq_sdev(base):
         return X.std(1), y, None
 class freq_momentum(base):
     def __init__(self, moment, **kwargs):
+        from collections import Iterable
+        from scipy.stats import skew,kurtosis
+        import numpy as np
+        if not isinstance(moment, Iterable):
+            moment=tuple(int(i) for i in reversed(bin(moment)[2:]))
+        else:
+            moment = tuple(moment)
         base.__init__(self, moment=moment, **kwargs)
+        self.methods = (np.mean,np.std, skew, kurtosis)
     def _process(self, X, y, freqs):
         import numpy as np
-        from scipy.stats import skew,kurtosis
-        methods = (np.mean,np.std, skew, kurtosis)
-        meth = methods[self.moment-1]
-        return meth(X,axis=1)[...,np.newaxis], y, None
+        meth = filter(None,((self.methods[i] if self.moment[i] and i < len(self.moment) else None) for i in range(len(self.methods))))
+        return np.hstack(tuple(m(X,axis=1)[...,np.newaxis] for m in meth)), y, None
 class pca(base):
     def __init__(self, ndim, **kwargs):
         base.__init__(self, ndim=ndim, **kwargs)
@@ -81,19 +87,23 @@ class mahal(base):
         from sklearn.mixture import DPGMM as GMM
         from sklearn.covariance import EmpiricalCovariance, MinCovDet
         base.__init__(self, lbl=lbl, **kwargs)
-        self.model = MinCovDet()
+        #self.model = EmpiricalCovariance()
         #self.model = GMM(1, covariance_type='diag', n_iter=100, params='wmc', init_params='wmc')
     def _labeling(self, X, y, freqs):
         import numpy as np
         y = np.copy(y).squeeze()
         model = np.abs([i for i in np.unique(y) if i < 0 and i is not None])
-        i = (y.squeeze()==model) | (y.squeeze()==-model)
+        i = np.abs(y.squeeze())==model
         j = ~i & (y.squeeze()!=0)
         y[...,i] = 1
         y[...,j] = -1
         return X, y, freqs
     def fit(self, X, y, freqs):
-        self.cov = self.model.fit(X[y.squeeze() < 0,...])
+        from sklearn.covariance import EmpiricalCovariance, MinCovDet
+        X, y, freqs = self._labeling(X, y, freqs)
+        self.model = EmpiricalCovariance()
+        X = X[y.squeeze() == 1,...]
+        self.cov = self.model.fit(X)
         #print 'model size : %s'  % str(self.model.means_.shape)
         return X,y,freqs
     def score(self,X,y, freqs):
@@ -105,10 +115,10 @@ class mahal(base):
         fpr, tpr, thresholds = roc_curve(y[y.squeeze()!=0,...].squeeze(), score_raw)
         return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
 class gmm(base):
-    def __init__(self, lbl, **kwargs):
+    def __init__(self, n_dim, **kwargs):
         from sklearn.mixture import DPGMM as GMM
-        base.__init__(self, lbl=lbl, **kwargs)
-        self.model = GMM(4, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
+        base.__init__(self, n_dim=n_dim, **kwargs)
+        #self.model = GMM(4, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
     def _labeling(self, X, y, freqs):
         import numpy as np
         y = np.copy(y).squeeze()
@@ -119,7 +129,10 @@ class gmm(base):
         y[...,j] = -1
         return X, y, freqs
     def fit(self, X, y, freqs):
-        self.model.fit(X[y.squeeze() < 0,...])
+        from sklearn.mixture import DPGMM as GMM
+        X, y, freqs = self._labeling(X, y, freqs)
+        self.model = GMM(self.n_dim, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
+        self.model.fit(X[y.squeeze() == 1,...])
         #print 'model size : %s'  % str(self.model.means_.shape)
         return X,y,freqs
     def score(self,X,y, freqs):
