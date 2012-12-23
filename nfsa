@@ -366,8 +366,12 @@ def get_samples(opt, h5= None):
 
         sampl = samples['data_%s_%f_%d'%(xsdfnc.__name__,srate,wndsize)]
 
-        if ( '.srate' in sampl or '.wndsize' in sampl ) and ( sampl['.srate'] != srate or sampl['.wndsize'] != wndsize ):
-            raise Exception('already processed for different srate and wndsize')
+        if '.srate' in sampl or '.wndsize' in sampl :
+            if scalar(sampl['.srate']) != srate or scalar(sampl['.wndsize']) != wndsize:
+                raise Exception('already processed for different srate (%s) and wndsize (%s)' %(scalar(sampl['.srate']),scalar(sampl['.wndsize'])))
+            print '## already processed for same srate and wndsize - overwriting '
+            for k in sampl.keys():
+                del sampl[k]
 
         spectrums = {}
         amplitudes = {}
@@ -619,7 +623,7 @@ def opts(args=None):
 if __name__=='__main__':
     from util import ip2int,int2ip,reverseDns,fig
     import numpy as np
-    from dataset import Dataset,Loader,H5File
+    from dataset import Dataset,H5File
     from h5py import File
     import util
     import models

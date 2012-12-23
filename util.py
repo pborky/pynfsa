@@ -338,9 +338,13 @@ def flow2str(flow, fields = None, dns=False, services=False, color=True):
 
 
 def scalar(x):
-    import numpy as np
-    if isinstance(x,np.ndarray) and hasattr(x,'item') and np.size(x)==1:
-        return x.item()
+    try:
+        x=x[:]
+    except  TypeError:
+        pass
+
+    if hasattr(x,'size') and x.size == 1 or hasattr(x,'__len__') and len(x)==1:
+        return x[0]
     else:
         return x
 

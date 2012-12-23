@@ -29,15 +29,29 @@ class H5File(object):
                 else:
                     return result
             else:
-                return item[:]
+                return item
         except NoSuchNodeError:
             return H5File(self.opt, h5=self.h5, grp=self.h5.createGroup(self.group,item))
     def __setitem__(self, key, value):
-        from tables import Group,NoSuchNodeError
-        key = key.split('/')
-        self.h5.createArray('%s/%s'%(self.group._v_pathname, '/'.join(key[:-1])),key[-1],value)
+        from collections import Iterable
+        if key[0] == '/':
+            raise ValueError("the ``/`` character is not allowed in object names: '%s'"%key)
+        path = key.rsplit('/',1)
+        if len(path)==2:
+            path,name = path
+            grp = self[path].group
+        else:
+            name, = path
+            grp = self.group
+        try:
+            if not isinstance(value,Iterable):
+                value=value,
+            self.h5.createArray(grp,name,value)
+        except TypeError:
+            setattr(grp,name,value)
+        #print self.keys()
     def keys(self):
-        return  [ g._v_pathname.split('/')[-1] for g in self.h5.listNodes(self.group) ]
+        return  [ g._v_pathname.rsplit('/',1)[-1] for g in self.h5.listNodes(self.group) ]
     def close(self):
         self.h5.close()
     def handle_exit(self, try_fnc, *arg,**kwarg):
@@ -135,9 +149,10 @@ class Dataset(object):
                 r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
                 # select submatrix containing time and size columns and rows where size is in interval [10,15)
         """
-        from numpy import argsort
+        from numpy import argsort,where
         if callable(predicate):
-            result =  self.data[predicate (self.data, self._getfield),...]
+            idx, = where(predicate (self.data, self._getfield))
+            result =  self.data[idx,...]
         else:
             result =  self.data[:]
         fld = self.fields
@@ -168,12 +183,13 @@ class Dataset(object):
         """Set column specified by 'field', and rows matched by 'predicate' set its value to 'value'.
            It can be vector or scalar (it will be broadcast).
         """
+        from numpy import where
         if callable(value):
             if predicate is None:
                 idx =  self.fields.index(field)
                 self.data[... ,idx] = value(self.data[... ,idx])
             else:
-                pred =  predicate (self.data, self._getfield)
+                pred =  where(predicate (self.data, self._getfield))
                 idx =  self.fields.index(field)
                 self.data[pred,idx] = value(self.data[pred,idx])
         else:
@@ -181,72 +197,13 @@ class Dataset(object):
                 idx =  self.fields.index(field)
                 self.data[... ,idx] = value
             else:
-                pred =  predicate (self.data, self._getfield)
+                pred =  where(predicate (self.data, self._getfield))
                 idx =  self.fields.index(field)
                 self.data[pred,idx] = value
-        return self.data.shape[0] if predicate is None else pred.sum()
+        return self.data.shape[0] if predicate is None else pred.size
     def save(self,h5):
         h5['data'] =  self.data
         h5['fields'] =  self.fields
-
-class Loader(object):
-    def __init__(self,opt, name=None):
-        from h5py import File
-        fn = name if name else opt.database
-        self.h5 = File(fn,'a')
-        self.opt = opt
-    def _get_groups(self,item = None):
-        from h5py import Group
-        groups = []
-        starts = []
-        def append_groups(grp):
-            import re
-            grp = self.h5[grp]
-            if not (isinstance(grp,Group) and 'fields' in grp):
-                return
-            if item and ( grp.name.endswith(item) or re.sub(r'[^\w]','_',grp.name).endswith(item) ):
-                return grp
-            if item and (grp.name.startswith(item) or re.sub(r'[^\w]','_',grp.name).startswith(item) ):
-                starts.append(grp)
-            groups.append(grp)
-        grp = self.h5.visit(append_groups)
-        if grp:
-            return grp
-        if starts:
-            return starts
-        if item:
-            return
-        return groups
-    def close(self):
-        self.h5.close()
-    def keys(self):
-        return [i.name for i in self._get_groups()]
-    def __getitem__(self, item):
-        grp = self._get_groups(item)
-        if isinstance(grp,list):
-            return grp
-        return Dataset(h5=grp)
-    def __delitem__(self, key):
-        del self.h5[key]
-    def __setitem__(self, key, value):
-        if not isinstance(value,Dataset):
-            raise ValueError('Expecting dataset instance')
-        value.save(self.h5.require_group(key))
-    def __getattribute__(self, item):
-        try:
-            return super(Loader, self).__getattribute__(item)
-        except AttributeError:
-            grp = self[item]
-            if grp: return grp
-            raise
-    def handle_exit(self,fnc):
-        try:
-            fnc(self.opt,h5=self.h5)
-        finally:
-            self.close()
-        exit()
-
-
 
 ## convivence method for compsoting coditions.
 class Predicate(object):
