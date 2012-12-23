@@ -149,10 +149,13 @@ class Dataset(object):
                 r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
                 # select submatrix containing time and size columns and rows where size is in interval [10,15)
         """
-        from numpy import argsort,where
+        from numpy import argsort,where,zeros
         if callable(predicate):
             idx, = where(predicate (self.data, self._getfield))
-            result =  self.data[idx,...]
+            if not len(idx):
+                result = zeros(shape=(0,self.data.shape[1]))
+            else:
+                result =  self.data[idx,...]
         else:
             result =  self.data[:]
         fld = self.fields
