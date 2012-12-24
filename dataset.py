@@ -6,7 +6,8 @@ class H5Node(object):
         if isinstance(h5,File):
             self.h5 = h5
         else:
-            self.h5 = openFile(opt.database,'a')
+            db = opt if isinstance(opt,str) else  opt.database
+            self.h5 = openFile(db,'a')
         self.group = self.h5.root if grp is None else grp
         self.opt = opt
     def _keyfnc(self,g):
@@ -208,8 +209,8 @@ class Table(object):
         return self.select(pred,fields=fields,retdset=retdset)
     def __delitem__(self, key):
         pred,fields,retdset = self._parse_key(key)
-        fields = [f for f in self.fields if f not in fields]
-        self.data,self.fields = self.select(pred,fields=fields,retdset=False),fields
+        d = self.select(pred,fields=fields,retdset=retdset)
+        self.data,self.fields = d.data,d.fields
     def __setitem__(self, key, value):
         pred,fields,retdset = self._parse_key(key)
         return self.set_fields(pred, fields, value)
