@@ -306,7 +306,7 @@ def get_samples(opt, h5= None):
     from itertools import product
     from operator import add
     from util import flow2str,scalar
-    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan,eraserest
+    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan,eraserest,red
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -350,6 +350,14 @@ def get_samples(opt, h5= None):
                 flows3,id3 = get_flow(opt,h5 = h5)
                 flows3 = reduce(add, flows3 )
         id3 = fl3['flowids']
+        if 'data' not in fl3:
+            stdout.write('## storing \'data\' in database %s..' % opt.database)
+            try:
+                flows3.save(fl3['data'])
+            except Exception as e:
+                stdout.write(colorize(boldred,red) * '\t#error:# %s\n' % str(e))
+            else:
+                stdout.write(colorize(green) * '\t#OK#\n')
     else:
         flows3,id3 = get_flow(opt,h5 = h5)
         flows3 = reduce(add, flows3 )
@@ -426,7 +434,7 @@ def get_samples(opt, h5= None):
             while k<ma:
                 # 10 dots progressbar
                 if (ma-mi)>=(10*wndspan) and  not ((k-mi)/wndspan) % (((ma-mi)/(10*wndspan))):
-                    stdout.write(cyan('.'))
+                    stdout.write(str(cyan('.')))
                     stdout.flush()
 
                 #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]

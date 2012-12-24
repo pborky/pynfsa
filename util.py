@@ -26,26 +26,27 @@ class colorize(object):
     def __init__(self,*colors):
         import re
         self.colors = colors
-        # simple markdown
-        self.md = re.compile(r'#([^#]+)#')
         # format mini-language
-        self.fml = re.compile(r'(%(?:[^{}]?(?:<|>|\+|^))?(?:\+|-|\s)?#?0?(?:[0-9]+)?,?(?:[.][0-9]+)?(?:b|c|d|e|E|f|F|g|G|n|o|s|x|X))')
+        self.fml = re.compile(r'(?:#([^#]+)#|(%(?:[^{}]?(?:<|>|\+|^))?(?:\+|-|\s)?#?0?(?:[0-9]+)?,?(?:[.][0-9]+)?(?:b|c|d|e|E|f|F|g|G|n|o|s|x|X)))')
     def __iter__(self):
         return iter(self.colors)
     def _rainbow(self):
         class Rainbow:
             def __init__(self,iter):
                 self.iter = iter
-            def __call__(self, s):
+            def _apply_color(self,s):
                 try:
                     color = self.iter.next()
-                    return color(s) if callable(color) else s
+                    return str(color(s)) if callable(color) else s
                 except StopIteration:
                     return s
+            def __call__(self, matcher):
+                return self._apply_color(reduce(None,filter(None,matcher.groups())))
+
         return Rainbow(iter(self))
+
     def __mul__(self, s):
-        replacement = combinator(str,self._rainbow(),lambda x:x.group(1))
-        return self.fml.sub(replacement,self.md.sub(replacement,s))
+        return self.fml.sub(self._rainbow(),s)
 
 def ip2int(ip):
     """convert string IPv4 address to int"""
