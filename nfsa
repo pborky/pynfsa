@@ -59,24 +59,25 @@ def get_labeling(opt,id3):
     import json
     from itertools import product
     from util import scalar,ip2int,int2ip
+    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan
 
     if not opt.annotations:
         raise Exception('no annotation file specified')
     f = open(opt.annotations)
     filters = json.load(f)
 
-    print '\033[34;1mannotations detected in filter file:\033[0m'
+    print colorize(boldblue,green) * '#annotations detected in filter file# %s:' % opt.annotations
     i = 0
     annotations = {}
     for f in filters:
         annot = '%s (%s)' %(f['fileName'],f['annotation'])  if 'fileName' in f else f['annotation']
         annotations[i] = (f['type'],annot,f)
         if f['type'] == 'FILTER_LEGITIMATE':
-            print '[\033[33;1m%d\033[0m] \033[32m%s\033[0m : %s'%(i,annotations[i][0],annotations[i][1])
+            print colorize(boldyellow,green) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
         elif f['type'] == 'FILTER_MALICIOUS':
-            print '[\033[33;1m%d\033[0m] \033[1;31m%s\033[0m : %s'%(i,annotations[i][0],annotations[i][1])
+            print colorize(boldyellow,boldred) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
         else:
-            print '[\033[33;1m%d\033[0m] \033[33m%s\033[0m : %s'%(i,annotations[i][0],annotations[i][1])
+            print colorize(boldyellow,yellow) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
         i+=1
     def get_classes(msg):
         model = []
@@ -90,7 +91,6 @@ def get_labeling(opt,id3):
                     pass
         print model
         return model
-    #'\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m'
     model  = get_classes('classes included in model: ')
     legit  = get_classes('normal classes: ')
     malicious  = get_classes('anomal classes: ')
@@ -214,7 +214,7 @@ def get_raw(opt, callback=None, keys=(), h5=None):
     else:
         raise NotImplementedError('in_format')
 
-    if tr:
+    if tr is not None:
         if not callable(callback):
             callback = lambda data,fn: data.save(tr[fn])
         if not keys:
@@ -228,7 +228,7 @@ def get_raw(opt, callback=None, keys=(), h5=None):
             print '## Extracting features from file %s...' % fn
             pkts = praser(fn,extract)
             print '\t%d records captured'%len(pkts)
-            data = Dataset(pkts, extract.fields)
+            data = Table(pkts, extract.fields)
             del pkts
             print '## Storing matrix in %s...' % opt.database
             callback(data,basename(fn))
@@ -237,12 +237,14 @@ def get_flow(opt, h5 = None):
     from util import timedrun
     from flowizer import Flowizer
     from operator import add
+    from dataset import H5Node
 
-    result = [[],()]
-    def process(data,flowize,postfix=''):
+    result = [[],None]
+    def process(data,flowize,postfix='',flowids=None):
         print '## Extracting flows using %s-tuple'%opt.flowid
         fl = h5[flowid]
-        q,f = flowize(data, fl['flowid']) if 'flowid' in fl else flowize(data)
+        print '## flows count: %d' % (len(flowids) if flowids else 0)
+        q,f = flowize(data, flowids=flowids if flowids else None)
         dataname= 'data_%s'%postfix if postfix else 'data'
         for i in (dataname,'flowids'):
             if i in fl:
@@ -254,7 +256,7 @@ def get_flow(opt, h5 = None):
         result[1] = q
 
     if not h5 :
-        h5 = File(opt.database,'a')
+        h5 = H5Node(opt,'a')
 
     if opt.flowid == '3':
         fflow=('src','dst','dport')
@@ -278,29 +280,33 @@ def get_flow(opt, h5 = None):
 
     flowize = timedrun(Flowizer(fields = fields,fflow=fflow,bflow=bflow,opt=opt))
 
+    fl = h5[flowid]
+    if 'flowids' in fl:
+        result[1] = fl['flowids']
+        result[1].data = result[1].data[:]
     if not tr:
-        fl = h5[flowid]
         keys = [ i[1] for i in (k.split('_',1) for k in fl.keys()) if len(i) > 1 ]
-        get_raw(opt,lambda x,fn:process(x,flowize,fn),keys=keys)
+        get_raw(opt,lambda x,fn:process(x,flowize,fn,flowids=result[1]),keys=keys)
     else:
         try:
             data = reduce(add,(tr[k] for k in sorted(tr.keys()))  )
-            process(data,flowize)
+            process(data,flowize,flowids=result[1])
         except MemoryError:
             for k in sorted(tr.keys()):
                 data = tr[k]
-                process(data,flowize,k)
+                process(data,flowize,k,flowids=result[1])
     return tuple(result)
 
 def get_samples(opt, h5= None):
     #TODO -> sampler.oy
     from sampler import csd,psd
-    from dataset import Dataset,H5File
+    from dataset import Table,H5Node
     from scipy.fftpack import fftfreq
     from sys import stdout
     from itertools import product
     from operator import add
     from util import flow2str,scalar
+    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan,eraserest
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -327,7 +333,7 @@ def get_samples(opt, h5= None):
         raise ValueError('No window length specified.')
 
     if not h5:
-        h5 = H5File(opt)
+        h5 = H5Node(opt)
 
     if flowid in h5:
         fl3 = h5[flowid]
@@ -398,8 +404,8 @@ def get_samples(opt, h5= None):
 
             ips[f] = ipfmt(id3row)
 
-            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m, \033[36mprocessing flow\033[0m: %s  '%
-                         (100.*l/len(flows),srate,wndsize,ipfmtc(id3row)))
+            progress_tmpl = colorize(boldyellow,boldyellow,boldyellow,cyan,None,eraserest) * '\rprogress: %0.2f %%, srate= %f Hz, wndsize= %d, #processing flow#: %s#.#'
+            stdout.write(progress_tmpl % (100.*l/len(flows),srate,wndsize,ipfmtc(id3row)))
             stdout.flush()
             l += 1
 
@@ -420,7 +426,7 @@ def get_samples(opt, h5= None):
             while k<ma:
                 # 10 dots progressbar
                 if (ma-mi)>=(10*wndspan) and  not ((k-mi)/wndspan) % (((ma-mi)/(10*wndspan))):
-                    stdout.write('\033[36m.\033[0m')
+                    stdout.write(cyan('.'))
                     stdout.flush()
 
                 #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
@@ -462,15 +468,17 @@ def get_samples(opt, h5= None):
                 spectrums[f] = spectrum
                 wids[f] = np.array(wid)
                 if unused:
-                    stdout.write('\r%s: unused \033[1;31m%d\033[0m of \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),unused,pkts))
+                    stdout.write(colorize(None, boldred,boldblue,eraserest) *'\r%s: unused %d of %d packets#.#\n' %(ipfmtc(id3row),unused,pkts))
                 else:
-                    stdout.write('\r%s: used \033[1;34m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),pkts))
+                    stdout.write(colorize(None, boldblue,eraserest) *'\r%s: used %d packets#.#\n' %(ipfmtc(id3row),pkts))
             else:
-                stdout.write('\r%s: unused \033[1;31m%d\033[0m packets\033[K\n' %(ipfmtc(id3row),pkts))
-            stdout.write('\rprogress: \033[33;1m%0.2f %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m   '%(100.*l/len(flows),srate,wndsize))
-            stdout.flush()
+                stdout.write(colorize(None, boldred,eraserest) *'\r%s: unused %d  packets#.#\n' %(ipfmtc(id3row),pkts))
 
-        stdout.write('\rprogress: \033[33;1m100 %%\033[0m, srate= \033[33;1m%f\033[0m Hz, wndsize= \033[33;1m%d\033[0m           \n'% (srate,wndsize))
+            progress_tmpl2 = colorize(boldyellow,boldyellow,boldyellow,eraserest) * '\rprogress: %0.2f %%, srate= %f Hz, wndsize= %d#.#'
+            stdout.write(progress_tmpl2 %(100.*l/len(flows),srate,wndsize))
+            stdout.flush()
+        progress_tmpl3 = colorize(boldyellow,boldyellow,boldyellow,eraserest) * '\rprogress: #100# %%, srate= %f Hz, wndsize= %d#.#\n'
+        stdout.write(progress_tmpl3 %(srate,wndsize))
         stdout.flush()
 
         if len(spectrums):
@@ -497,7 +505,7 @@ def annotate(opt, h5=None):
     from util import flow2str,scalar
     from operator import add
     from sys import stdout
-    from dataset import H5File
+    from dataset import H5Node
     import json
 
     def feedback(i):
@@ -508,7 +516,7 @@ def annotate(opt, h5=None):
         return {'type':types.get(input[0].strip()),'annotation':input[1],'data':i}
 
     if not h5 :
-        h5 = H5File(opt)
+        h5 = H5Node(opt)
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -577,7 +585,7 @@ def opts(args=None):
     group= parser.add_argument_group('Flow extraction options', 'Required for "flow", "sample" and "model" actions')
     group.add_argument('-i', dest='flowid',choices=flowids, metavar='(%s)'%('|'.join(flowids)), help='flow identification (3-tuple or 4-tuple)')
     group.add_argument('-u', dest='usesyns', action='store_true', help='don`t use SYN packets to distinguish flow start')
-    group.add_argument('-p', dest='protocol', type=int, help='protocol to take in account, default = 6 (TCP)')
+    group.add_argument('-p', dest='protocol', metavar='<protocol>', type=int, help='protocol to take in account, default = 6 (TCP)')
 
     group = parser.add_argument_group('Sampling options', 'Required for "sample" and "model" actions')
     group.add_argument('-s', dest='srate', metavar='<sample rate>',action='append',type=float,help='sample rate to use, can be specified multiple times')
@@ -617,12 +625,14 @@ def opts(args=None):
 
 if __name__=='__main__':
     from util import ip2int,int2ip,reverseDns,fig,scalar
-    from dataset import Dataset,H5File
+    from dataset import Table,H5Node
     from info import __graphics__
     from sys import stdout
+    from util import colorize,boldred,boldwhite,boldyellow,boldblue,boldgreen,green
 
     import numpy as np
     import util
+    import functional
     import models
     import logging
 
@@ -649,28 +659,28 @@ if __name__=='__main__':
 
     elif opt.action == 'load':
 
-        l = H5File(opt)
+        l = H5Node(opt)
 
     elif opt.action == 'raw':
 
-        H5File(opt).handle_exit(get_raw)
+        H5Node(opt).handle_exit(get_raw)
 
     elif opt.action == 'annotate':
 
-        H5File(opt).handle_exit(annotate)
+        H5Node(opt).handle_exit(annotate)
 
     elif opt.action == 'flow':
 
-        H5File(opt).handle_exit(get_flow)
+        H5Node(opt).handle_exit(get_flow)
 
     elif opt.action == 'sample':
 
-        H5File(opt).handle_exit(get_samples)
+        H5Node(opt).handle_exit(get_samples)
 
     elif opt.action == 'model':
         #TODO -> model.py
         from models import freq_treshold,freq_bands,freq_momentum,freq_sdev,freq_low_hi,pca,scale,gmm,pipeline,FitError,mahal
-        h5 = H5File(opt)
+        h5 = H5Node(opt)
 
 
         def iterate(name, *args):
@@ -707,7 +717,7 @@ if __name__=='__main__':
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             samples = h5['samples']
 
-            print '\033[34;1mdatasets found in database %s:\033[0m' %opt.database
+            print colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database
             datasets = []
             i = 0
             for k in samples.keys():
@@ -724,7 +734,7 @@ if __name__=='__main__':
                 if srate not in opt.srate or wndsize not in opt.window:
                     continue
 
-                print '[\033[33;1m%d\033[0m] \033[32m%s\033[0m : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize)
+                print colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize)
 
                 datasets.append((i,(k,sampl,srate,wndsize)))
                 i+=1
@@ -790,7 +800,7 @@ if __name__=='__main__':
             #h5.close()
     elif opt.action == 'feature':
         #TODO -> model.py
-        from dataset import Variable,Dataset
+        from dataset import Variable,Table
         from scipy.fftpack import fftfreq,fft
         from sys import stdout
         from util import scatter,scalar
@@ -819,7 +829,7 @@ if __name__=='__main__':
             y = sampl['y'].value
             freqs = sampl['freqs'].value
 
-            id3 = Dataset(data=sampl['id'].value,fields=sampl['idfields'].value)
+            id3 = Table(data=sampl['id'].value,fields=sampl['idfields'].value)
             labeling,labeling2 = get_labeling(id3)
             labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
 

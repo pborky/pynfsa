@@ -1,4 +1,51 @@
+from functional import *
+try:
+    from fabulous.color import bold,italic,underline,strike,blink,flip, \
+                                black,red,green,yellow,blue,magenta,cyan,white ,\
+                                highlight_black,highlight_red,highlight_green,highlight_yellow,highlight_blue,\
+                                highlight_magenta,highlight_cyan,highlight_white
+    boldblack = combinator(bold ,black)
+    boldred = combinator(bold ,red)
+    boldgreen = combinator(bold ,green)
+    boldyellow = combinator(bold ,yellow)
+    boldblue = combinator(bold ,blue)
+    boldmagenta = combinator(bold ,magenta)
+    boldcyan = combinator(bold ,cyan)
+    boldwhite = combinator(bold ,white)
+    eraserest = lambda x:'\033[K'
+except ImportError:
+    print 'fabulous not found, colors are disabled'
+    highlight_black=highlight_red=highlight_green=highlight_yellow=highlight_blue=\
+    highlight_magenta=highlight_cyan=highlight_white=bold=italic=underline=strike=\
+    blink=flip=black=red=green=yellow=blue=magenta=cyan=white =\
+    boldblack,boldred,boldgreen,boldyellow,boldblue,boldmagenta,boldcyan,boldwhite = lambda x:x
+    
 
+
+class colorize(object):
+    def __init__(self,*colors):
+        import re
+        self.colors = colors
+        # simple markdown
+        self.md = re.compile(r'#([^#]+)#')
+        # format mini-language
+        self.fml = re.compile(r'(%(?:[^{}]?(?:<|>|\+|^))?(?:\+|-|\s)?#?0?(?:[0-9]+)?,?(?:[.][0-9]+)?(?:b|c|d|e|E|f|F|g|G|n|o|s|x|X))')
+    def __iter__(self):
+        return iter(self.colors)
+    def _rainbow(self):
+        class Rainbow:
+            def __init__(self,iter):
+                self.iter = iter
+            def __call__(self, s):
+                try:
+                    color = self.iter.next()
+                    return color(s) if callable(color) else s
+                except StopIteration:
+                    return s
+        return Rainbow(iter(self))
+    def __mul__(self, s):
+        replacement = combinator(str,self._rainbow(),lambda x:x.group(1))
+        return self.fml.sub(replacement,self.md.sub(replacement,s))
 
 def ip2int(ip):
     """convert string IPv4 address to int"""
@@ -25,8 +72,10 @@ def opengzip(fn,cb):
             cb(tmp.name)
         finally:
             tmp.close()
-    except:
+    except IOError:
         cb(fn)
+    except KeyboardInterrupt:
+        raise
     finally:
         gzip.close()
 
@@ -125,12 +174,12 @@ def get_packets(fn,extractor):
     def pcapopen(fn = None):
         from pcap import pcapObject
         p = pcapObject()
-        if fn: p.open_offline(fn)
-        else: p.open_live('any' , 200, False, 100)
         try:
+            if fn: p.open_offline(fn)
+            else: p.open_live('any' , 200, False, 100)
             p.dispatch(-1,cb)
         except Exception as e:
-            #print e
+            print bold(red('error:')),red(str(e))
             pass
 
     result = []
@@ -144,7 +193,6 @@ def get_packets(fn,extractor):
         pass
 
     return result
-
 
 def fig(plt_fnc, name=None, show=True):
     """fig( plt_fnc, [name=None, show=False] ) -> figure,result
@@ -313,7 +361,10 @@ class TcpServices(object):
         return cls.get_map().get('%s'%service)
 
 def flow2str(flow, fields = None, dns=False, services=False, color=True):
-    template = '\033[32m%s\033[0m:\033[33m%s\033[0m > \033[32m%s\033[0m:\033[33m%s\033[0m' if color else '%s:%s > %s:%s'
+    if color:
+        template = colorize(green,yellow,green,yellow) * '%s:%s > %s:%s'
+    else:
+        template = '%s:%s > %s:%s'
     if isinstance(flow,tuple):
         if 'src' not in fields or 'dst' not in fields:
             raise ValueError('items "src" and "dst" are expected to identify flow')
@@ -338,12 +389,8 @@ def flow2str(flow, fields = None, dns=False, services=False, color=True):
 
 
 def scalar(x):
-    try:
-        x=x[:]
-    except  TypeError:
-        pass
-
-    if hasattr(x,'size') and x.size == 1 or hasattr(x,'__len__') and len(x)==1:
+    """ convert to scalar if possible """
+    if (hasattr(x,'size') and x.size == 1) or (hasattr(x,'__len__') and len(x)==1) or (hasattr(x,'shape') and sum(x.shape)==1):
         return x[0]
     else:
         return x

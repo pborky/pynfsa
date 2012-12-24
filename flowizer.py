@@ -1,4 +1,7 @@
-
+from util import colorize,boldred,boldwhite,boldyellow,boldblue
+tmpl_colision = colorize(boldred,None,boldwhite) * '\r****** #collision# in %s (hash: %d)\n'
+tmpl_progress = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: %0.1f %% (dropped: %d of %d)        '
+tmpl_progress2 = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: #100# %% (dropped: %d of %d)\n'
 
 class Flowizer(object):
     """ Annotates records based on requirements.
@@ -11,16 +14,16 @@ class Flowizer(object):
         self.protocol = opt.protocol if opt else True
         self.usesyns = opt.usesyns if opt else usesyns
     def __call__(self, data, flowids=None):
-        from numpy import array,abs
-        from dataset import Dataset
+        from numpy import array,abs,vstack,squeeze
+        from dataset import Table
         from util import scalar,int2ip,flow2str
         from sys import stdout
 
         flow2str2 =  lambda x,f: flow2str(x,f,dns=self.reverse_dns,services=self.reverse_dns)
 
         pay = data.select((data.proto==self.protocol),order='time',retdset=True)
-        hashes = {} if flowids is None else dict((scalar(f['flow']),tuple(f[self.fflow])) for f in flowids)
-        scalar = lambda x : x.item() if  hasattr(x,'item') else x
+        flow = set(squeeze((flowids['flow']))) if flowids else set()
+        hashes = {} #if flowids is None else dict((scalar(f['flow']),tuple(f[self.fflow])) for f in flowids)
         negate = lambda x: -abs(x)
         l = 0
         dropped = 0
@@ -31,15 +34,20 @@ class Flowizer(object):
             tr = tuple(scalar(x[f]) for f in self.bflow)
             hr = hash(tr)
             negative = False
-            if h in hashes:
+
+            if h in flow:
+                pass
+            elif hr in flow:
+                negative = True
+            elif h in hashes:
                 if hashes[h] != t:
-                    stdout.write('\r****** collision in %s (hash: %d)\n' %(flow2str2(t,self.fflow),h))
+                    stdout.write(tmpl_colision % (flow2str2(t,self.fflow),h))
                     stdout.flush()
                     dropped += 1
                     continue
             elif hr in hashes:
                 if hashes[hr] != tr:
-                    stdout.write( '\r****** collision in %s (hash: %d)\n' %(flow2str2(tr,self.bflow),hr))
+                    stdout.write(tmpl_colision % (flow2str2(tr,self.bflow),hr))
                     stdout.flush()
                     dropped += 1
                     continue
@@ -54,13 +62,13 @@ class Flowizer(object):
                         syn = scalar(x['flags'])&18 == 2
                     if not syn:
                         stdout.write( '\r****** no syn packet in %s (hash: %d) (flags: %d)\n' % (flow2str2(t,self.fflow),h,scalar(x['flags']) ))
-                        stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
+                        stdout.write( tmpl_progress % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                         stdout.flush()
                         dropped += 1
                         droppedips.add((scalar(x['dst']),scalar(x['dport'])))
                         continue
                 stdout.write( '\r###### new flow %s (hash: %d)\n' % (flow2str2(t,self.fflow),h))
-                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
+                stdout.write( tmpl_progress % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                 stdout.flush()
                 hashes[h] = t
             x['flow'] = h
@@ -69,10 +77,10 @@ class Flowizer(object):
                     if i in x:
                         x[i] = negate # broadcasting lambda
             l += 1
-            if l%1000 == 0 :
-                stdout.write( '\rprogress: \033[33;1m%0.1f %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        ' % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
+            if l%10 == 0 :
+                stdout.write( tmpl_progress % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
                 stdout.flush()
-        stdout.write( '\rprogress: \033[33;1m100 %%\033[0m (dropped: \033[33m%d\033[0m of \033[33;1m%d\033[0m)        \n' % (dropped,(l+dropped)))
+        stdout.write( tmpl_progress2 % (dropped,(l+dropped)))
         stdout.write( '\n%s\n'% [(int2ip(d),pd) for d,pd in droppedips])
         stdout.flush()
         if 'paylen' in pay:
@@ -80,6 +88,12 @@ class Flowizer(object):
         else:
             pay = pay.select(None,order=('time',),retdset=True, fields=self.fields)
 
-        qd = Dataset(data=array(tuple((j,)+k for j,k in hashes.items())),fields=('flow',)+self.fflow)
+        d = array(tuple((j,)+k for j,k in hashes.items()))
+        if not flowids:
+            qd = Table(data=d,fields=('flow',)+self.fflow)
+        elif not len(hashes):
+            return  flowids, pay
+        else:
+            qd = Table(data=vstack((flowids.data,d)),fields=('flow',)+self.fflow)
         return  qd, pay
 

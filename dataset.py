@@ -1,6 +1,6 @@
 __author__ = 'peterb'
 
-class H5File(object):
+class H5Node(object):
     def __init__(self, opt, h5 = None, grp = None ):
         from tables import openFile,File
         if isinstance(h5,File):
@@ -9,6 +9,24 @@ class H5File(object):
             self.h5 = openFile(opt.database,'a')
         self.group = self.h5.root if grp is None else grp
         self.opt = opt
+    def _keyfnc(self,g):
+        return g._v_pathname.rsplit('/',1)[-1]
+    def _itemfnc(self,g):
+        return self._keyfnc(g),self._get_item(g)
+    def __len__(self):
+        return len(self.keys())
+    def __iter__(self):
+        from itertools import imap
+        return imap(self._keyfnc,self.h5.iterNodes(self.group))
+    def __reversed__(self):
+        return reversed(self.keys())
+    def iteritems(self):
+        from itertools import imap
+        return imap(self._itemfnc,self.h5.iterNodes(self.group))
+    def keys(self):
+        return  [ i for i in iter(self) ]
+    def items(self):
+        return  [ i for i in self.iteritems() ]
     def __contains__(self, item):
         from tables import NoSuchNodeError
         try:
@@ -18,20 +36,39 @@ class H5File(object):
             return False
     def __delitem__(self, key):
         self.h5.getNode(self.group,key)._f_remove(True)
-    def __getitem__(self, item):
-        from tables import Group,NoSuchNodeError
-        try:
-            item = self.h5.getNode(self.group,item)
+    def _get_item(self,item):
+        from tables import Node,Group
+        from util import scalar
+        if isinstance(item,Node):
             if isinstance(item,Group):
-                result = H5File(self.opt,h5=self.h5, grp=item)
+                result = H5Node(self.opt,h5=self.h5, grp=item)
                 if 'data' in result and 'fields' in result:
-                    return Dataset(h5=result)
+                    return Table(h5=result)
                 else:
                     return result
             else:
-                return item
+                return scalar(item)
+    def __getitem__(self, item):
+        from tables import Node,NoSuchNodeError
+        if isinstance(item,Node):
+            return self._get_item(item)
+        try:
+            item = self.h5.getNode(self.group,item)
+            return self._get_item(item)
         except NoSuchNodeError:
-            return H5File(self.opt, h5=self.h5, grp=self.h5.createGroup(self.group,item))
+            item = item.rsplit('/',1)
+            if self.group._v_pathname != '/':
+                if len(item)>1:
+                    item[0] = self.group._v_pathname+ item[0]
+                else:
+                    item = (self.group._v_pathname, item[0])
+            else:
+                if len(item)>1 and  item[0][0] != '/':
+                    item[0] = '/'+ item[0]
+                if not len(item)>1 :
+                    item = (self.group._v_pathname, item[0])
+
+            return H5Node(self.opt, h5=self.h5, grp=self.h5.createGroup(*item,createparents=True))
     def __setitem__(self, key, value):
         from collections import Iterable
         if key[0] == '/':
@@ -50,8 +87,6 @@ class H5File(object):
         except TypeError:
             setattr(grp,name,value)
         #print self.keys()
-    def keys(self):
-        return  [ g._v_pathname.rsplit('/',1)[-1] for g in self.h5.listNodes(self.group) ]
     def close(self):
         self.h5.close()
     def handle_exit(self, try_fnc, *arg,**kwarg):
@@ -64,8 +99,54 @@ class H5File(object):
         finally:
             self.close()
         exit()
+    def _printNode(self, key, val, padding= '', last=False,maxdepth=None,maxcount=None):
+        from fabulous.color import highlight_blue,red,blue,green,cyan,yellow,bold
+        from tables import Array
 
-class Dataset(object):
+        if isinstance(val,H5Node):
+            val.printTree(padding=padding,last=last,maxdepth=maxdepth,maxcount=maxcount)
+        else:
+            if isinstance(val,Array):
+                val = yellow('Array(%s,__dtype__=%s)'% (','.join(str(i) for i in val.shape),val.dtype))
+            elif isinstance(val,Table):
+                val = green(val)
+            else:
+                val = red('%s,__dtype__=%s' % (str(val),type(val).__name__))
+            if last:
+                print '%s `%s [%s]' % (padding[:-1], cyan(key), val )
+            else:
+                print '%s`%s [%s]' % (padding, cyan(key), val )
+
+    def printTree(self, padding= '', last=False,maxdepth=3,maxcount=50):
+        from fabulous.color import red,blue,green,cyan,yellow,bold
+
+        if maxdepth is not None and maxdepth<0:
+            print padding[:-1] + ' `'+bold(blue('(...)'))
+            return
+
+        if last:
+            print padding[:-1] + ' `' + bold(blue(self._keyfnc(self.group) + '/' ))
+            padding = padding[:-1]+' '
+        else:
+            print padding + '`' + bold(blue(self._keyfnc(self.group) + '/')  )
+
+        count = len(self)
+        large = False
+        if maxcount is not None and count>maxcount:
+            count=maxcount
+            large = True
+        if self is None or not count:
+            print padding, ' `-'+red('(empty)')
+        else:
+            for key, val in self.iteritems():
+                count -= 1
+                if count==0 and large:
+                    #print padding + ' |-'+(cyan('(...)'))
+                    print padding + ' '+'(...)'
+                    break
+                self._printNode(key,val,padding=padding+' |',last=not count,maxdepth=maxdepth-1,maxcount=maxcount)
+
+class Table(object):
     """Encapsulation of the numpy array, in order to conviently select/update data.
     """
     def __init__(self, data=None, fields=None, h5=None):
@@ -76,7 +157,8 @@ class Dataset(object):
         """
         from numpy import array,ndarray
         if h5 is not None:
-            self.data = h5['data']
+            self.h5 = h5
+            self.data = h5['data'][:]
             self.fields = tuple(h5['fields'])
         elif data is not None and fields is not None:
             self.data = data if isinstance(data,ndarray) else array(data)
@@ -88,52 +170,96 @@ class Dataset(object):
     def __add__(self,other):
         """add two dataset objects. Must have same shape and fields."""
         from numpy import vstack
-        if not isinstance(other,Dataset):
+        if not isinstance(other,Table):
             raise TypeError('Must be Dataset')
         if self.fields != other.fields:
             raise TypeError('Must have same fields')
-        return Dataset(data=vstack((self.data,other.data)),fields=self.fields)
+        if not len(self):
+            return Table(data=other.data,fields=self.fields)
+        elif not len(other):
+            return self
+        else:
+            return Table(data=vstack((self.data,other.data)),fields=self.fields)
     def __len__(self):
         """return the length of the dataset."""
         return self.data.shape[0]
+    def _check_fields(self,fields):
+        err = [f for f in fields if f not in self.fields]
+        if len(err):
+            raise ValueError('some fields not in this dataset (%s)' % err)
+    def _parse_key(self,key):
+        if isinstance(key, tuple):
+            if isinstance(key[0],(int,slice,Predicate)) or key[0] is Ellipsis:
+                pred,fields,retdset = key[0],key[1:],True
+            else:
+                pred,fields,retdset =  None,key,False
+        elif isinstance(key,(int,slice,Predicate)) or key is Ellipsis:
+            pred,fields,retdset =  key,None,True
+        else:
+            pred,fields,retdset =  None,(key,),False
+
+        if isinstance(fields,tuple) and len(fields) == 1 and isinstance(fields[0],slice):
+            self._check_fields((fields[0].start,fields[0].stop))
+        elif fields is not None:
+            self._check_fields(fields)
+        return pred,fields,retdset
     def __getitem__(self, key):
-        if isinstance(key, tuple):
-            predicate = key[0] if isinstance(key[0],Predicate) else None
-            fields = key[1:] if isinstance(key[0],Predicate) else key
-            return self.select(predicate,fields=fields,retdset=isinstance(key[0],Predicate))
-        elif isinstance(key,Predicate):
-            return self.select(key,retdset=True)
-        else:
-            return self.select(None,fields=(key,))
+        pred,fields,retdset = self._parse_key(key)
+        return self.select(pred,fields=fields,retdset=retdset)
     def __delitem__(self, key):
-        if isinstance(key, tuple):
-            predicate = key[0] if isinstance(key[0],Predicate) else None
-            fields = key[1:] if isinstance(key[0],Predicate) else key
-            self.data = self.select(predicate,retdset=False)
-            self.retain_fields(tuple(f for f in self.fields if f not in fields))
-        elif isinstance(key,Predicate):
-            self.data = self.select(key,retdset=False)
-        else:
-            self.retain_fields(tuple(f for f in self.fields if f not in key))
-    def __setitem__(self,key, value):
-        if isinstance(key, tuple):
-            if len(key) > 2 :
-                raise ValueError('expecting optional predicate to filter rows and strig to denote column')
-            predicate = key[0] if isinstance(key[0],Predicate) else None
-            field = key[1] if isinstance(key[0],Predicate) else key
-            return self.set_fields(predicate, field, value)
-        else:
-            return self.set_fields(None, key, value)
+        pred,fields,retdset = self._parse_key(key)
+        fields = [f for f in self.fields if f not in fields]
+        self.data,self.fields = self.select(pred,fields=fields,retdset=False),fields
+    def __setitem__(self, key, value):
+        pred,fields,retdset = self._parse_key(key)
+        return self.set_fields(pred, fields, value)
     def __contains__(self,item):
         return item in self.fields
     def __iter__(self):
         def iterator():
             for i in range(len(self)):
-                yield Dataset(data=self.data[i,...],fields=self.fields)
+                yield Table(data=self.data[i,...],fields=self.fields)
         return iterator()
+    def keys(self):
+        return self.fields
+    def __str__(self):
+        return 'Table(%s,__len__=%d,__dtype__=%s)'%( ','.join(self.keys()), len(self),self.data.dtype)
+    def __repr__(self):
+        return '<dataset.Table(%s,__len__=%d,__dtype__=%s)>'%( ','.join(self.keys()), len(self),self.data.dtype)
     def _getfield(self,x,f):
         """return vector containing the field"""
         return x[...,self.fields.index(f)]
+    def _get_indexing(self,predicate,fields):
+        from numpy import array,newaxis,ndarray
+        # rows
+        if callable(predicate):
+            pred = predicate (self.data, self._getfield)
+        elif isinstance(predicate,(int,slice)) or predicate is Ellipsis:
+            pred =  predicate
+        else:
+            pred = Ellipsis
+        # columns
+        if isinstance(fields,tuple) and len(fields) == 1 :
+            if isinstance(fields[0],slice):
+                fldidx = slice(self.fields.index(fields[0].start),self.fields.index(fields[0].stop))
+            else:
+                fldidx = self.fields.index(fields[0])
+                fldidx = slice(fldidx,fldidx+1)
+            fields = self.fields[fldidx]
+        elif fields:
+            fldidx = array([ f in fields for f in self.fields ])
+        else:
+            fields = self.fields
+            fldidx = Ellipsis
+
+        #combine
+        if isinstance(fldidx,ndarray) and isinstance(pred,ndarray):
+            idx = pred[...,newaxis]&fldidx[newaxis,...]
+        else:
+            idx = (pred,fldidx)
+
+        return idx,fields
+
     def select(self, predicate, order=None, group= None, retdset=None, fields=None, **kwargs):
         """Select submatrix based on predicate and fields.
             Input:
@@ -149,61 +275,47 @@ class Dataset(object):
                 r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
                 # select submatrix containing time and size columns and rows where size is in interval [10,15)
         """
-        from numpy import argsort,where,zeros
-        if callable(predicate):
-            idx, = where(predicate (self.data, self._getfield))
-            if not len(idx):
-                result = zeros(shape=(0,self.data.shape[1]))
-            else:
-                result =  self.data[idx,...]
-        else:
-            result =  self.data[:]
-        fld = self.fields
-        if order and order in fld:
-            result=result[argsort(self._getfield(result,order)),...]
-        if group:
-            print '###### grouping is not implemented'
-        if fields:
-            result = result[...,tuple(fld.index(f) for f in fields)]
-            fld = fields
+        from numpy import argsort
+
+        idx,fields = self._get_indexing(predicate,fields)
+        result = self.data[idx]
+
+        if order is not None and order in fields:
+            result = result[argsort( result[...,self.fields.index(order)] ),...]
         if retdset:
-            return Dataset(data=result,fields=fld)
+            return Table(data=result,fields=fields)
         else:
             return result
-    def add_field(self,field, value):
-        """Add new column called 'field' and set its value to 'value'. It can be vector or scalar (it will be broadcast)."""
-        from numpy import hstack
-        self.data = hstack((self.data,self.data[...,-1]))
-        self.fields = field
-        self.set_fields(None, field, value)
+    def add_field(self, field, default):
+        """Add new column called 'field' and set its value to 'default'. It can be vector or scalar (it will be broadcast)."""
+        from numpy import hstack,ndarray
+        buff = ndarray( shape=(self.data.shape[0],1),dtype=self.data.dtype)
+        buff[:] = default
+        self.data,self.fields = hstack((self.data,buff)),self.fields+(field,)
     def retain_fields(self, fields):
         """Keep column specified in 'fields', others are discarded."""
         if any(f not in self.fields for f in fields):
             raise ValueError('some fields not in this dataset')
         self.data = self.data[...,tuple(self.fields.index(f) for f in fields)]
         self.fields = fields
-    def set_fields(self, predicate, field, value):
+    def set_fields(self, predicate, fields, value):
         """Set column specified by 'field', and rows matched by 'predicate' set its value to 'value'.
            It can be vector or scalar (it will be broadcast).
         """
-        from numpy import where
+        from numpy import ndarray
+
+        idx,fields = self._get_indexing(predicate,fields)
+
+        # evaluate
         if callable(value):
-            if predicate is None:
-                idx =  self.fields.index(field)
-                self.data[... ,idx] = value(self.data[... ,idx])
-            else:
-                pred =  where(predicate (self.data, self._getfield))
-                idx =  self.fields.index(field)
-                self.data[pred,idx] = value(self.data[pred,idx])
+            self.data[idx] = value(self.data[idx])
         else:
-            if predicate is None:
-                idx =  self.fields.index(field)
-                self.data[... ,idx] = value
-            else:
-                pred =  where(predicate (self.data, self._getfield))
-                idx =  self.fields.index(field)
-                self.data[pred,idx] = value
-        return self.data.shape[0] if predicate is None else pred.size
+            self.data[idx] = value
+
+        # return updated row count
+
+        return idx.shape[0] if isinstance(idx,ndarray) else idx[0].shape[0] if isinstance(idx[0],ndarray) else -1
+
     def save(self,h5):
         h5['data'] =  self.data
         h5['fields'] =  self.fields
