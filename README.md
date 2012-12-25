@@ -13,4 +13,5 @@ NetFlow Spectral Analyzer in Python
 * [ipaddr-py v2.1.10](http://code.google.com/p/ipaddr-py/) - IPv4/IPv6 manipulation library in Python
 * [pytables v2.3.1](http://www.pytables.org/moin) - package for managing hierarchical datasets and designed to cope with extremely large amounts of data
 * [h5py v2.0.1](http://code.google.com/p/h5py/) -  Python interface to the Hierarchical Data Format library, version 5
-* [fabulous0 v0.1.5](http://lobstertech.com/fabulous.html) -  library designed to make the output of terminal applications look fabulous
+* [fabulous v0.1.5](http://lobstertech.com/fabulous.html) -  library designed to make the output of terminal applications look fabulous
+* [scapy v2.2.0](http://www.secdev.org/projects/scapy/) - a powerful interactive packet manipulation program
