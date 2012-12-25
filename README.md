@@ -15,3 +15,7 @@ NetFlow Spectral Analyzer in Python
 * [h5py v2.0.1](http://code.google.com/p/h5py/) -  Python interface to the Hierarchical Data Format library, version 5
 * [fabulous v0.1.5](http://lobstertech.com/fabulous.html) -  library designed to make the output of terminal applications look fabulous
 * [scapy v2.2.0](http://www.secdev.org/projects/scapy/) - a powerful interactive packet manipulation program
+
+###Screenshots:
+![Invocation of the sampler](http://i.imgur.com/BR6y0.png)
+![HDF5 tree viewer](http://i.imgur.com/pJNdP.png)
