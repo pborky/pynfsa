@@ -18,7 +18,7 @@ class Labeler(object):
     def prepare(self):
         import json
         try:
-            f = open(opt.annotations,'r')
+            f = open(self.opt.annotations,'r')
             self.filters = json.load(f)
         except IOError:
             self.filters = self._interact(opt)
