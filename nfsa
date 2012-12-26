@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
 
+from __future__ import print_function
 from util import *
 
 def annotate(opt, h5=None):
@@ -14,7 +15,7 @@ def annotate(opt, h5=None):
         return
     samples = h5['samples']
     for k,sampl in samples.iteritems():
-        print '%% labeling sampleset %s' % k
+        print('%% labeling sampleset %s' % k)
         labeler(sampl)
 
 def show_spectra(opt,h5=None):
@@ -103,12 +104,12 @@ def get_raw(opt, callback=None, keys=(), h5=None):
 
     for fn in opt.file:
         if isfile(fn) and basename(fn) not in keys:
-            print '## Extracting features from file %s...' % fn
+            print('## Extracting features from file %s...' % fn)
             pkts = praser(fn,extract)
-            print '\t%d records captured'%len(pkts)
+            print('\t%d records captured' % len(pkts))
             data = Table(pkts, extract.fields)
             del pkts
-            print '## Storing matrix in %s...' % opt.database
+            print('## Storing matrix in %s...' % opt.database)
             callback(data,basename(fn))
 
 def get_flow(opt, h5 = None):
@@ -118,15 +119,15 @@ def get_flow(opt, h5 = None):
 
     result = [[],None]
     def process(data,flowize,postfix='',flowids=None):
-        print '## Extracting flows using %s-tuple'%opt.flowid
+        print('## Extracting flows using %s-tuple'%opt.flowid)
         fl = h5[flowid]
-        print '## flows count: %d' % (len(flowids) if flowids else 0)
+        print('## flows count: %d' % (len(flowids) if flowids else 0))
         q,f = flowize(data, flowids=flowids if flowids else None)
         dataname= 'data_%s'%postfix if postfix else 'data'
         for i in (dataname,'flowids'):
             if i in fl:
                 del fl[i]
-        print '## Storing matrices in %s...' % opt.database
+        print('## Storing matrices in %s...' % opt.database)
         f.save(fl[dataname])
         q.save(fl['flowids'])
         result[0].append(f)
@@ -169,7 +170,7 @@ def get_flow(opt, h5 = None):
             data = reduce(add,(tr[k] for k in sorted(tr.keys()))  )
             process(data,flowize,flowids=result[1])
         except MemoryError:
-            print colorize(boldred,red) * '#out of memory:# #trying conservative approach..#'
+            print(colorize(boldred,red) * '#out of memory:# #trying conservative approach..#')
             for k in sorted(tr.keys()):
                 data = tr[k]
                 process(data,flowize,k,flowids=result[1])
@@ -202,7 +203,7 @@ def get_samples(opt, h5= None):
             if keys:
                 flows3 = reduce(add,(fl3[k] for k in keys) )
             else:
-                print '## no flow data in h5 database, trying to get it from raw files'
+                print('## no flow data in h5 database, trying to get it from raw files')
                 if not opt.file:
                     raise Exception('No flow data specified. Try to specify some pcap or netflow files on command line.')
                 flows3,id3 = get_flow(opt,h5 = h5)
@@ -230,7 +231,7 @@ def get_models(opt, h5= None):
 
     if not h5:
         h5 = H5Node(opt)
-
+    samples = h5['samples']
 
     computations = [
         ('Bands','GMM'),
@@ -244,13 +245,13 @@ def get_models(opt, h5= None):
 
     modeler = Modeler(opt,computations)
 
-    print colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database
+    print(colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database)
     datasets = []
     i = 0
-    for k in h5grp.keys():
+    for k in samples.keys():
         if not k.startswith('data'):
             continue
-        sampl = h5grp[k]
+        sampl = samples[k]
 
         if  '.srate' not in sampl or  '.wndsize' not in sampl :
             continue
@@ -258,10 +259,10 @@ def get_models(opt, h5= None):
         srate = scalar(sampl['.srate'])
         wndsize = scalar(sampl['.wndsize'])
 
-        if srate not in opt.srate or wndsize not in opt.window:
+        if opt.srate and  srate not in opt.srate or opt.window and wndsize not in opt.window:
             continue
 
-        print colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize)
+        print(colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize))
 
         datasets.append((i,(k,sampl,srate,wndsize)))
         i+=1
@@ -277,7 +278,7 @@ def get_models(opt, h5= None):
 
     for k,sampl,srate,wndsize in selected:
 
-        print '## processing %s'%k
+        print('## processing %s'%k)
 
         if not 'annot' in sampl:
             labeler = Labeler(opt)
@@ -285,18 +286,10 @@ def get_models(opt, h5= None):
             flows,annots,lbl = labeler(sampl)
 
 
-        X = sampl['X'][:]
-        y = sampl['y'][:]
-        freqs = sampl['freqs'][:]
-
-
-        flowids = sampl['flowids']
-
-
         #labeling,labeling2,labeling3 = get_labeling(opt,id3)
 
         #y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
-        print '## please hold on'
+        print('## please hold on')
 
         modeler(sampl)
 
@@ -354,7 +347,7 @@ def opts(args=None):
 
     parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6)
 
-    #parser.print_help()
+    #parser.print(_help())
     longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
     shortopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if not k.startswith('--'))
     opt =  parser.parse_args(args)
@@ -404,15 +397,28 @@ if __name__=='__main__':
         from sys import stdout
         f = open(opt.out_file,'w') if opt.out_file else stdout
         try:
-            print json.dump([get_filter(f.strip()) for f in opt.file if isfile(f)], f)
+            print(json.dump([get_filter(f.strip()) for f in opt.file if isfile(f)], f))
         finally:
             f.close()
 
     elif opt.action == 'load':
 
         h5 = H5Node(opt)
-        if opt.annotations:
-             lbl = Labeling(opt)
+        try:
+            get_ipython
+        except NameError:
+            banner=exit_msg=''
+            # First import the embed function
+            from IPython.config.loader import Config
+            from IPython.frontend.terminal.embed import InteractiveShellEmbed
+            # Now create the IPython shell instance. Put ipshell() anywhere in your code
+            # where you want it to open.
+            ipshell = InteractiveShellEmbed(banner1=banner, exit_msg=exit_msg)
+        else:
+            banner = '*** Nested interpreter ***'
+            exit_msg = '*** Back in main IPython ***'
+            def ipshell():pass
+        ipshell()
 
     elif opt.action == 'raw':
 
@@ -477,7 +483,7 @@ if __name__=='__main__':
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             samples = h5['samples']
 
-            print colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database
+            print(colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database)
             datasets = []
             i = 0
             for k in samples.keys():
@@ -494,7 +500,7 @@ if __name__=='__main__':
                 if srate not in opt.srate or wndsize not in opt.window:
                     continue
 
-                print colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize)
+                print(colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize))
 
                 datasets.append((i,(k,sampl,srate,wndsize)))
                 i+=1
@@ -521,7 +527,7 @@ if __name__=='__main__':
                     #if srate not in opt.srate or wndsize not in opt.window:
                     #    continue
 
-                    print '## processing %s'%k
+                    print('## processing %s'%k)
 
                     X = sampl['X'][:]
                     y = sampl['y'][:]
@@ -532,7 +538,7 @@ if __name__=='__main__':
                     labeling,labeling2,labeling3 = get_labeling(opt,id3)
 
                     y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
-                    print '## please hold on'
+                    print('## please hold on')
 
                     f = []
                     n = []
@@ -544,13 +550,13 @@ if __name__=='__main__':
                         f += d[0],
                         n += 'srate=%f, %s' % (srate,'%s(%d)' % p[1]),
                         scores += s,
-                    print 'srate=%fHz, wndsize=%dsamps'%(srate,wndsize)
-                    print '\n'.join(results)
+                    print('srate=%fHz, wndsize=%dsamps'%(srate,wndsize))
+                    print('\n'.join(results))
                     def plotline(x,y):
                         return lambda ax: ax.plot(x, y, '-')
                     fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
                 except Exception as e:
-                    print e
+                    print(e)
                     raise
         finally:
             pass
