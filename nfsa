@@ -15,7 +15,7 @@ def annotate(opt, h5=None):
         return
     samples = h5['samples']
     for k,sampl in samples.iteritems():
-        print('%% labeling sampleset %s' % k)
+        print(colorize(None,boldblue,green ) * '## #labeling sampleset# %s' % k)
         labeler(sampl)
 
 def show_spectra(opt,h5=None):

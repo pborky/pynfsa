@@ -28,7 +28,7 @@ class colorize(object):
         import re
         self.colors = colors
         # format mini-language
-        self.fml = re.compile(r'(?:#([^#]+)#|(%(?:[^{}]?(?:<|>|\+|^))?(?:\+|-|\s)?#?0?(?:[0-9]+)?,?(?:[.][0-9]+)?(?:b|c|d|e|E|f|F|g|G|n|o|s|x|X)))')
+        self.fml = re.compile(r'(?:(##)|#([^#]+)#|(%(?:[^{}]?(?:<|>|\+|^))?(?:\+|-|\s)?#?0?(?:[0-9]+)?,?(?:[.][0-9]+)?(?:b|c|d|e|E|f|F|g|G|n|o|s|x|X)))')
     def __iter__(self):
         return iter(self.colors)
     def _rainbow(self):
@@ -42,7 +42,8 @@ class colorize(object):
                 except StopIteration:
                     return s
             def __call__(self, matcher):
-                return self._apply_color(reduce(None,filter(None,matcher.groups())))
+                return self._apply_color(reduce(lambda a,x:x,filter(None,matcher.groups()),None))
+
 
         return Rainbow(iter(self))
 

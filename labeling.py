@@ -1,3 +1,5 @@
+
+from __future__ import print_function
 from util import *
 
 class Labeler(object):
@@ -73,11 +75,11 @@ class Labeler(object):
         flows = [i for i in reversed(sorted(((i,len(data[data.flow==scalar(i['flow'])])) for i in d),key=lambda x: x[-1]))]
         min_packets =  opt.min_packets if opt.min_packets else 100
         flows = [i for i,c in flows if c>min_packets]
-        print '## %d records to annotate'%len(flows)
-        print '''Please enter annotations for each destination
+        print('## %d records to annotate'%len(flows))
+        print('''Please enter annotations for each destination
 in form: `<number>,<text>`
 where number is -1 for malicious, 1 for legitimate and 0 for unknown destiantions
-and text is any text used as annotation.'''
+and text is any text used as annotation.''')
         filt = [feedback(i) for i in sorted(flows,key=lambda x: x['dport'])]
         filt2 = [
             {
@@ -108,7 +110,8 @@ and text is any text used as annotation.'''
             if not len(match):
                 continue
             if (match['annot']!=-1).any():
-                print colorize(boldred,red)*'#warning#: #filters are not disjoint, you will probably loose some  annotation information#'
+
+                print(colorize(None, boldred,red,boldyellow,red)*'## #warning#: #filters# %s #are not disjoint, you will probably loose some information#:'%f['annotation'],(match['annot']!=-1).sum())
             fl[pred,'annot'] = f.get('idx')
 
             if len(match) == 1:
@@ -116,7 +119,7 @@ and text is any text used as annotation.'''
             elif len(match) > 1:
                 flows.update( (i,f.get('idx')) for i in match['flow'].squeeze() )
         if 'annot' in h5grp:
-            print colorize(boldyellow,yellow)*'#warning#: #annotation dataset is going to be overwritten#'
+            print(colorize(None, boldyellow,yellow)*'## #warning#: #annotation dataset is going to be overwritten#')
             del h5grp['annot']
         fl[...,'flow','annot'].save(h5grp['annot/flowids'])
         annots = {}
