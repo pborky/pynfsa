@@ -81,8 +81,8 @@ class Sampler(object):
     """
     def __init__(self, opt):
         self.opt = opt
-        self.srate = opt.srate # default 10 ms
-        self.wndsize = opt.wndsize #
+        self.srates = opt.srate # default 10 ms
+        self.windows = opt.window #
         if opt.transform == 'psd':
             self.xsdfnc = psd
         elif opt.transform == 'csd':
