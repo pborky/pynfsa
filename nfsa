@@ -1,149 +1,28 @@
 #!/usr/bin/python
 
-def get_annotations(opt,id3):
-    #TODO -> model.py
-    from dataset import Variable
-    import json
-    from itertools import product
-    from util import scalar,ip2int,int2ip
 
-    flow = Variable('flow')
-    src = Variable('src')
-    dst = Variable('dst')
-    dport = Variable('dport')
-    sport = Variable('sport')
+from util import *
 
-    # some heuristics
-    if not opt.annotations:
-        raise Exception('no annotation file specified')
-    f = open(opt.annotations)
-    filters = json.load(f)
-    labeling3 = {}
-    labeling2 = {}
-    labeling = {}
-    i = 1
-    for f in filters:
-        for k in ('dstIPs','dstPorts','srcIPs','dstPorts'):
-            if k not in f:
-                f[k] = []
-        if 'fileName' in f:
-            annot = '%s (%s)' %(f['fileName'],f['annotation'])
-        else:
-            annot = f['annotation']
-        if f['type'] not in labeling2:
-            labeling2[annot] = i
-            labeling3[i] = f['type']
-            i += 1
-        a = labeling2[annot]
-        if f['dstIPs'] and f['dstPorts'] and f['srcIPs']:
-            for d,dp,s in product(f['dstIPs'],f['dstPorts'],f['srcIPs']):
-                for r in id3.select((src==ip2int(s))&(dst==ip2int(d))&(dport==dp),fields=('flow',)):
-                    labeling[scalar(r)] = a
-        elif f['dstIPs'] and f['dstPorts']:
-            for d,dp in product(f['dstIPs'],f['dstPorts']):
-                for r in id3.select((dst==ip2int(d))&(dport==dp),fields=('flow',)):
-                    labeling[scalar(r)] = a
-        elif f['dstIPs']:
-            for d in f['dstIPs']:
-                for r in id3.select((dst==ip2int(d)),fields=('flow',)):
-                    labeling[scalar(r)] = a
-        elif f['srcIPs']:
-            for d in f['srcIPs']:
-                for r in id3.select((src==ip2int(d)),fields=('flow',)):
-                    labeling[scalar(r)] = a
-    return labeling,dict( (v,k) for k,v in labeling2.items() ), labeling3
+def annotate(opt, h5=None):
+    """ Crappy feature allowing to create annotation file
+    """
+    from labeling import Labeler
+    labeler = Labeler(opt)
+    labeler.prepare()
 
-def get_labeling(opt,id3):
-    #TODO -> model.py
-    from dataset import Variable
-    import json
-    from itertools import product
-    from util import scalar,ip2int,int2ip
-    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan
+    if 'samples' not in h5:
+        return
+    samples = h5['samples']
+    for k,sampl in samples.iteritems():
+        print '%% labeling sampleset %s' % k
+        labeler(sampl)
 
-    if not opt.annotations:
-        raise Exception('no annotation file specified')
-    f = open(opt.annotations)
-    filters = json.load(f)
-
-    print colorize(boldblue,green) * '#annotations detected in filter file# %s:' % opt.annotations
-    i = 0
-    annotations = {}
-    for f in filters:
-        annot = '%s (%s)' %(f['fileName'],f['annotation'])  if 'fileName' in f else f['annotation']
-        annotations[i] = (f['type'],annot,f)
-        if f['type'] == 'FILTER_LEGITIMATE':
-            print colorize(boldyellow,green) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
-        elif f['type'] == 'FILTER_MALICIOUS':
-            print colorize(boldyellow,boldred) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
-        else:
-            print colorize(boldyellow,yellow) * '[%d] %s : %s' %(i,annotations[i][0],annotations[i][1])
-        i+=1
-    def get_classes(msg):
-        model = []
-        while not model:
-            s = raw_input(msg)
-            model = [k for k,v in annotations.iteritems() if s in v[:-1]]
-            if not model:
-                try:
-                    model = [ j for j in ( int(i.strip()) for i in  s.split(',') ) if j in annotations]
-                except :
-                    pass
-        print model
-        return model
-    model  = get_classes('classes included in model: ')
-    legit  = get_classes('normal classes: ')
-    malicious  = get_classes('anomal classes: ')
-    model_legit = None
-    while model_legit is None:
-        try: model_legit = bool(int(raw_input('model is normal: ')))
-        except : pass
-    print model_legit
-
-    classes = {}
-    classes.update((i,1) for i in legit if i not in model)
-    classes.update((i,2) for i in malicious if i not in model)
-    classes.update((i,-1 if model_legit else -2) for i in model)
-
-    labeling = {
-        1:'LEGIT',
-        2:'MALICIOUS',
-        -1:'LEGIT',
-        -2:'MALICIOUS',
-        0: 'UNKNOWN'
-    }
-    y = {}
-
-    for i,(type,annot,f) in annotations.iteritems():
-        for k in ('dstIPs','dstPorts','srcIPs','dstPorts'):
-            if k not in f:
-                f[k] = []
-
-        a = classes.get(i) if i in classes else 0
-
-        if f['dstIPs'] and f['dstPorts'] and f['srcIPs']:
-            for d,dp,s in product(f['dstIPs'],f['dstPorts'],f['srcIPs']):
-                for r in id3[(id3.src==ip2int(s))&(id3.dst==ip2int(d))&(id3.dport==dp)]['flow']:
-                    y[scalar(r)] = a
-        elif f['dstIPs'] and f['dstPorts']:
-            for d,dp in product(f['dstIPs'],f['dstPorts']):
-                for r in id3[(id3.dst==ip2int(d))&(id3.dport==dp)]['flow']:
-                    y[scalar(r)] = a
-        elif f['dstIPs']:
-            for d in f['dstIPs']:
-                for r in id3[(id3.dst==ip2int(d))]['flow']:
-                    y[scalar(r)] = a
-        elif f['srcIPs']:
-            for d in f['srcIPs']:
-                for r in id3[(id3.src==ip2int(d))]['flow']:
-                    y[scalar(r)] = a
-
-    return y,labeling,dict((i,annot) for i,(type,annot,f) in annotations.iteritems())
 def show_spectra(opt,h5=None):
     #TODO -> model.py
     from models import pipeline,freq_bands,freq_treshold
+    from dataset import H5File
     if not h5:
-        h5 = File(opt.database,'a')
+        h5 = H5File(opt.database,'a')
     if 'samples' not in h5:
         raise Exception('no samples found')
     samples = h5['samples']
@@ -170,7 +49,7 @@ def show_mahal(opt,h5=None):
     #TODO -> model.py
     from models import pipeline,freq_bands,freq_treshold
     if not h5:
-        h5 = File(opt.database,'a')
+        h5 = H5File(opt.database,'a')
     if 'samples' not in h5:
         raise Exception('no samples found')
     samples = h5['samples']
@@ -196,7 +75,6 @@ def show_mahal(opt,h5=None):
 def get_raw(opt, callback=None, keys=(), h5=None):
     from extractor import PcapExtractor,FlowExtractor
     from os.path import isfile,basename
-    from util import get_packets,get_netflow
 
     if opt.in_format == 'pcap':
         extract = PcapExtractor( ('time','src','sport','dst','dport','proto','paylen','flags', 'flow') )
@@ -234,7 +112,6 @@ def get_raw(opt, callback=None, keys=(), h5=None):
             callback(data,basename(fn))
 
 def get_flow(opt, h5 = None):
-    from util import timedrun
     from flowizer import Flowizer
     from operator import add
     from dataset import H5Node
@@ -292,6 +169,7 @@ def get_flow(opt, h5 = None):
             data = reduce(add,(tr[k] for k in sorted(tr.keys()))  )
             process(data,flowize,flowids=result[1])
         except MemoryError:
+            print colorize(boldred,red) * '#out of memory:# #trying conservative approach..#'
             for k in sorted(tr.keys()):
                 data = tr[k]
                 process(data,flowize,k,flowids=result[1])
@@ -299,14 +177,12 @@ def get_flow(opt, h5 = None):
 
 def get_samples(opt, h5= None):
     #TODO -> sampler.oy
-    from sampler import csd,psd
+    from sampler import Sampler
     from dataset import Table,H5Node
     from scipy.fftpack import fftfreq
     from sys import stdout
     from itertools import product
     from operator import add
-    from util import flow2str,scalar
-    from util import colorize,boldblue,green,yellow,boldyellow,boldred,cyan,eraserest,red
 
     if opt.flowid == '3':
         flowid = 'flows3'
@@ -315,25 +191,7 @@ def get_samples(opt, h5= None):
     else:
         raise NotImplementedError('flowid')
 
-    if opt.transform == 'psd':
-        xsdfnc = psd
-    elif opt.transform == 'csd':
-        xsdfnc = csd
-    else:
-        raise NotImplementedError('transform')
-
-    if opt.srate:
-        srates = opt.srate
-    else:
-        raise ValueError('No sample rate specified.')
-
-    if opt.window:
-        windows = opt.window
-    else:
-        raise ValueError('No window length specified.')
-
-    if not h5:
-        h5 = H5Node(opt)
+    sampler = Sampler(opt)
 
     if flowid in h5:
         fl3 = h5[flowid]
@@ -364,195 +222,84 @@ def get_samples(opt, h5= None):
 
     samples = h5['samples']
 
-    for srate,wndsize in product(srates,windows) : #srates:
-        if srate<=0 :
-            continue
+    sampler(samples,flows3,id3)
 
+def get_models(opt, h5= None):
+    from models import Modeler
+    from labeling import Labeler
 
-        speriod = 1./ srate # sampling period in seconds
-        wndspan = int(1e6 * wndsize * speriod) # window span in microseconds
-
-        sampl = samples['data_%s_%f_%d'%(xsdfnc.__name__,srate,wndsize)]
-
-        if '.srate' in sampl or '.wndsize' in sampl :
-            if scalar(sampl['.srate']) != srate or scalar(sampl['.wndsize']) != wndsize:
-                raise Exception('already processed for different srate (%s) and wndsize (%s)' %(scalar(sampl['.srate']),scalar(sampl['.wndsize'])))
-            print '## already processed for same srate and wndsize - overwriting '
-            for k in sampl.keys():
-                del sampl[k]
-
-
-        spectrums = {}
-        amplitudes = {}
-        wids = {}
-        ips = {}
-
-        # some colorful sugar
-        ipfmt = lambda i: flow2str(i,dns=opt.reverse_dns,services=opt.reverse_dns, color=False)
-        ipfmtc = lambda i: flow2str(i,dns=opt.reverse_dns,services=opt.reverse_dns, color=True)
-
-        stdout.write('\n')
-        stdout.flush()
-
-        flows = {}
-        for f in flows3['flow']:
-            f = scalar(f)
-            if f not in flows:
-                flows[f] = 0
-            else:
-                flows[f] += 1
-        flows = dict((k,v) for k,v in flows.items() if v>100)
-
-        l = 1
-        #for f in flid[:chooseflows,0]:
-        for id3row in id3:
-            f = scalar(id3row['flow'])
-            if f not in flows:
-                continue
-
-            ips[f] = ipfmt(id3row)
-
-            progress_tmpl = colorize(boldyellow,boldyellow,boldyellow,cyan,None,eraserest) * '\rprogress: %0.2f %%, srate= %f Hz, wndsize= %d, #processing flow#: %s#.#'
-            stdout.write(progress_tmpl % (100.*l/len(flows),srate,wndsize,ipfmtc(id3row)))
-            stdout.flush()
-            l += 1
-
-            # select related packets
-            #fl =  flows[(flows[...,2] == f ),...]
-            fl =  flows3[flows3.flow==f]
-            tm = fl['time']
-            mi = tm.min()
-            ma = tm.max()
-
-            k = mi
-            i = 0
-            spectrum = []
-            amplitude = []
-            wid = []
-            unused = 0
-
-            while k<ma:
-                # 10 dots progressbar
-                if (ma-mi)>=(10*wndspan) and  not ((k-mi)/wndspan) % (((ma-mi)/(10*wndspan))):
-                    stdout.write(str(cyan('.')))
-                    stdout.flush()
-
-                #w = fl.data[(tm>=k) & (tm<k+wndsize*srate),...]
-                if 'paylen' in fl:
-                    w = fl[(fl.time>=k)&(fl.time<k+wndspan),'time','paylen']
-                else:
-                    w = fl[(fl.time>=k)&(fl.time<k+wndspan),'time','packets','size']
-
-                if not len(w)>0:
-                    unused += np.sum(w['packets']) if 'packets' in w else len(w)
-                    k += wndspan
-                    i += 1
-                    continue
-
-                # sampling intervals
-                bounds = np.linspace(k, k+wndspan, wndsize, endpoint=True)[...,np.newaxis]
-
-                amp,xsd = xsdfnc(w,bounds)
-
-                if not xsd.any():
-                    unused += np.sum(w['packets']) if 'packets' in w else len(w)
-                    k += wndspan
-                    i += 1
-                    continue
-
-                wid.append(i)
-                spectrum.append(xsd)
-                amplitude.append(amp)
-
-                k += wndspan
-                i += 1
-
-            pkts = np.sum(fl['packets']) if 'packets' in fl else len(fl)
-
-            if  len(amplitude):
-                amplitude = np.vstack(a[np.newaxis,...] for a in amplitude)
-                spectrum = np.vstack(a[np.newaxis,...] for a in spectrum)
-                #amplitudes[f] = amplitude
-                spectrums[f] = spectrum
-                wids[f] = np.array(wid)
-                if unused:
-                    stdout.write(colorize(None, boldred,boldblue,eraserest) *'\r%s: unused %d of %d packets#.#\n' %(ipfmtc(id3row),unused,pkts))
-                else:
-                    stdout.write(colorize(None, boldblue,eraserest) *'\r%s: used %d packets#.#\n' %(ipfmtc(id3row),pkts))
-            else:
-                stdout.write(colorize(None, boldred,eraserest) *'\r%s: unused %d  packets#.#\n' %(ipfmtc(id3row),pkts))
-
-            progress_tmpl2 = colorize(boldyellow,boldyellow,boldyellow,eraserest) * '\rprogress: %0.2f %%, srate= %f Hz, wndsize= %d#.#'
-            stdout.write(progress_tmpl2 %(100.*l/len(flows),srate,wndsize))
-            stdout.flush()
-        progress_tmpl3 = colorize(boldyellow,boldyellow,boldyellow,eraserest) * '\rprogress: #100# %%, srate= %f Hz, wndsize= %d#.#\n'
-        stdout.write(progress_tmpl3 %(srate,wndsize))
-        stdout.flush()
-
-        if len(spectrums):
-            flows = list(spectrums.keys())
-
-            X = np.vstack(spectrums[f] for f in flows) # spectrums
-            #ampl = np.vstack(amplitudes[f] for f in flows) # amplitudes
-            y = np.vstack(np.array([[f]]).repeat(spectrums[f].shape[0],0) for f in flows) # flows
-            #wnds = np.vstack(wids[f][...,np.newaxis] for f in flows) # windows kept
-
-            sampl['.srate'] = srate
-            sampl['.wndsize'] = wndsize
-
-            sampl['X'] = X
-            sampl['y'] = y
-            sampl['freqs'] = fftfreq(wndsize-1,d=1./srate)
-
-            id3.save(sampl['flowids'])
-
-
-def annotate(opt, h5=None):
-    """ Crappy feature allowing to create annotation file
-    """
-    from util import flow2str,scalar
-    from operator import add
-    from sys import stdout
-    from dataset import H5Node
-    import json
-
-    def feedback(i):
-        types = {'2':'FILTER_MALICIOUS','1':'FILTER_LEGITIMATE', '0': None}
-        input = ()
-        while len(input)!=2 or input[0].strip() not in types:
-            input = raw_input('%s ? '%flow2str(i,dns=True,services=True)).split(',',1)
-        return {'type':types.get(input[0].strip()),'annotation':input[1],'data':i}
-
-    if not h5 :
+    if not h5:
         h5 = H5Node(opt)
 
-    if opt.flowid == '3':
-        flowid = 'flows3'
-    elif opt.flowid == '4':
-        flowid = 'flows4'
-    else:
-        raise NotImplementedError('flowid')
 
-    d  = h5['%s/flowids'%flowid]
-    data = reduce(add,  (h5['%s/%s'%(flowid,k)] for k in h5['flows3'].keys() if k.startswith('data')))
-    flows = [i for i in reversed(sorted(((i,len(data[data.flow==i['flow']])) for i in d),key=lambda x: x[-1]))]
-    min_packets =  opt.min_packets if opt.min_packets else 100
-    flows = [i for i,c in flows if c>min_packets]
-    print '## %d records to annotate'%len(flows)
-    filt = [feedback(i) for i in sorted(flows,key=lambda x: x['dport'])]
-    filt2 = [
-        {
-            'dstIPs':list(set( int2ip(scalar(j['data']['dst'])) for j in filt if j['annotation'] == a)),
-            'dstPorts':list(set( scalar(j['data']['dport']) for j in filt if j['annotation'] == a)),
-            'annotation':a,
-            'type':t
-        } for a,t in set((i['annotation'],i['type']) for i in filt)
+    computations = [
+        ('Bands','GMM'),
+        ('Bands','Mahal'),
+        ('Threshold','Mahal'),
+        ('Threshold','MomentumMVKS', 'Mahal' ),
+        ('Threshold','MomentumMVKS', 'Scaler', 'Mahal' ),
+        ('Threshold','PCA', 'Scaler', 'Mahal' ),
+        ('Threshold','PCA', 'Scaler', 'GMM' )
     ]
-    try:
-        out = open(opt.out_file,'w') if  opt.out_file else stdout
-    except :
-        out =  stdout
-    json.dump(filt2,out)
+
+    modeler = Modeler(opt,computations)
+
+    print colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database
+    datasets = []
+    i = 0
+    for k in h5grp.keys():
+        if not k.startswith('data'):
+            continue
+        sampl = h5grp[k]
+
+        if  '.srate' not in sampl or  '.wndsize' not in sampl :
+            continue
+
+        srate = scalar(sampl['.srate'])
+        wndsize = scalar(sampl['.wndsize'])
+
+        if srate not in opt.srate or wndsize not in opt.window:
+            continue
+
+        print colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize)
+
+        datasets.append((i,(k,sampl,srate,wndsize)))
+        i+=1
+    datasets = dict(datasets)
+
+    if len(datasets)>1:
+        selected = []
+        while not selected:
+            s = raw_input('datasets to use:')
+            selected = [datasets[int(i.strip())] for i in s.split(',')]
+    else:
+        selected = datasets.values()
+
+    for k,sampl,srate,wndsize in selected:
+
+        print '## processing %s'%k
+
+        if not 'annot' in sampl:
+            labeler = Labeler(opt)
+            labeler.prepare()
+            flows,annots,lbl = labeler(sampl)
+
+
+        X = sampl['X'][:]
+        y = sampl['y'][:]
+        freqs = sampl['freqs'][:]
+
+
+        flowids = sampl['flowids']
+
+
+        #labeling,labeling2,labeling3 = get_labeling(opt,id3)
+
+        #y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
+        print '## please hold on'
+
+        modeler(sampl)
+
 
 def opts(args=None):
     """ User interface features
@@ -632,14 +379,11 @@ def opts(args=None):
 
 
 if __name__=='__main__':
-    from util import ip2int,int2ip,reverseDns,fig,scalar
     from dataset import Table,H5Node
     from info import __graphics__
     from sys import stdout
-    from util import colorize,boldred,boldwhite,boldyellow,boldblue,boldgreen,green
 
     import numpy as np
-    import util
     import functional
     import models
     import logging
@@ -657,7 +401,6 @@ if __name__=='__main__':
 
         import json
         from os.path import isfile
-        from util import get_filter
         from sys import stdout
         f = open(opt.out_file,'w') if opt.out_file else stdout
         try:
@@ -667,7 +410,9 @@ if __name__=='__main__':
 
     elif opt.action == 'load':
 
-        l = H5Node(opt)
+        h5 = H5Node(opt)
+        if opt.annotations:
+             lbl = Labeling(opt)
 
     elif opt.action == 'raw':
 
@@ -686,17 +431,24 @@ if __name__=='__main__':
         H5Node(opt).handle_exit(get_samples)
 
     elif opt.action == 'model':
+
+        H5Node(opt).handle_exit(get_models)
+
+    elif None:
         #TODO -> model.py
-        from models import freq_treshold,freq_bands,freq_momentum,freq_sdev,freq_low_hi,pca,scale,gmm,pipeline,FitError,mahal
+        from models import freq_treshold,freq_bands,freq_momentum,freq_sdev,freq_low_hi,pca,Scaler,gmm,pipeline,FitError,mahal
         h5 = H5Node(opt)
 
+        def fapply(fnc, *args):
+            from functional import partial
+            if len(args):
+                return [ (fnc(a),a) for a in args ]
+            else:
+                return (fnc(),None),
 
-        def iterate(name, *args):
+        def iterate( *args):
             from itertools import product
-            cmds = [arg[0] for arg  in args]
-            params = product(*[arg[1] for arg  in args])
-            return [ (tuple((cmds[i].__name__,param[i]) for i in range(len(cmds))),pipeline(*[cmds[i](param[i]) for i in range(len(cmds))])) for param in params ]
-
+            return [( ','.join('%s(%s)'%(c.__name__,str(a)) for c,a in cmds) , pipeline(*[c for c,a in cmds])) for cmds in product(args)]
 
         def crossval(method, X, y, freqs, folds = 10):
             from sklearn.cross_validation import StratifiedKFold
@@ -714,14 +466,14 @@ if __name__=='__main__':
         try:
             methods = {}
             #methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,5,10,25))  , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (5,10))   ,  ( mahal, (0,) ) ))
-            methods.update(iterate( 'bands', ( freq_treshold, (0,)) ,  ( mahal, (0,) ) ))
-            methods.update(iterate( 'bands2', ( freq_treshold, (0,)) , ( freq_bands, (2,10))  ,  ( gmm, (5,) ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_bands, 5, 10 ) ,  fapply( mahal, 0 ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) ,  fapply( mahal, 0 ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_bands, 2,10 )  ,  fapply( gmm, 5, ) ))
             #methods.update(iterate( 'sdev', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (14,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'momentum', ( freq_treshold, (0,)) , ( freq_momentum, (14,))  ,  ( mahal, (1,) ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_momentum, 14 ) , fapply( Scaler ) ,  fapply( gmm, 1 ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_momentum, 14 )  ,  fapply( mahal, 1 ) ))
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( 'pca', ( freq_treshold, (0,)) ,  ( pca, (5,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
+            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( pca, 5 ) , fapply( Scaler ) ,  fapply( gmm, 1 ) ))
             #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
             samples = h5['samples']
 
@@ -779,11 +531,8 @@ if __name__=='__main__':
 
                     labeling,labeling2,labeling3 = get_labeling(opt,id3)
 
-                    #labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
-
                     y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
                     print '## please hold on'
-                    #X, y, freqs, srate, wndsize = get_sampl(k)
 
                     f = []
                     n = []
@@ -806,12 +555,11 @@ if __name__=='__main__':
         finally:
             pass
             #h5.close()
-    elif opt.action == 'feature':
+    elif None:
         #TODO -> model.py
         from dataset import Variable,Table
         from scipy.fftpack import fftfreq,fft
         from sys import stdout
-        from util import scatter,scalar
 
         flow = Variable('flow')
         src = Variable('src')
