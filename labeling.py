@@ -96,22 +96,27 @@ and text is any text used as annotation.''')
         json.dump(filt2,out)
         return  filt2
     def __call__(self, h5grp):
-        from numpy import array,vectorize
+        from numpy import array,vectorize,unique
         from dataset import Table
         if 'flowids' not in h5grp:
             raise ValueError('expectiong \'flowids\' dataset is present in h5 group')
         fl = h5grp['flowids']
         fl.add_field('annot',-1)
         flows = {}
-
+        annot = dict((f['idx'],f) for f in self.filters)
+        #print(annot)
         for f in self.filters:
             pred =  f['predicate']
             match = fl[pred]
             if not len(match):
                 continue
             if (match['annot']!=-1).any():
-
-                print(colorize(None, boldred,red,boldyellow,red)*'## #warning#: #filters# %s #are not disjoint, you will probably loose some information#:'%f['annotation'],(match['annot']!=-1).sum())
+                if not f['dstIPs'] or not f['dstPorts']:
+                    print(colorize(None, boldred,red,boldyellow,red)*'## #warning#: #colliding filter# %s #is ignored#:'%f['annotation'],(match['annot']!=-1).sum())
+                    match = match[match.annot==-1]
+                else:
+                    colliding = [annot[scalar(a)]['annotation'] for a in unique(match['annot']) if a in annot ]
+                    print(colorize(None, boldred,red,boldyellow, boldyellow,red,)*'## #warning#: #filters# %s, %s #are not disjoint, you will probably loose some information#: '%(f['annotation'],', '.join(colliding)),(match['annot']!=-1).sum())
             fl[pred,'annot'] = f.get('idx')
 
             if len(match) == 1:
@@ -127,7 +132,7 @@ and text is any text used as annotation.''')
             if 'idx' in f:
                 annots[f['idx']] = (f.get('type'),'%s (%s)' %(f.get('annotation'),f.get('fileName')))
         a = array([ list((k,)+v) for k,v in annots.iteritems()  ], dtype=str)
-        annot = Table(data=a, fields=('annot','caption', 'type'))
+        annot = Table(data=a, fields=('annot','type','caption'))
         annot.save(h5grp['annot/annotations'])
 
 
