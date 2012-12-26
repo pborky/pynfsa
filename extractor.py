@@ -1,4 +1,7 @@
 
+
+from util import *
+
 class Extractor(object):
     """Used for extraction of various attributes of raw data. """
     def __init__(self, fields):

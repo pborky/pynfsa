@@ -1,9 +1,10 @@
-from functional import *
+
 try:
     from fabulous.color import bold,italic,underline,strike,blink,flip, \
                                 black,red,green,yellow,blue,magenta,cyan,white ,\
                                 highlight_black,highlight_red,highlight_green,highlight_yellow,highlight_blue,\
                                 highlight_magenta,highlight_cyan,highlight_white
+    from functional import *
     boldblack = combinator(bold ,black)
     boldred = combinator(bold ,red)
     boldgreen = combinator(bold ,green)
@@ -47,6 +48,10 @@ class colorize(object):
 
     def __mul__(self, s):
         return self.fml.sub(self._rainbow(),s)
+
+def is_iterable(val):
+    from collections import Iterable
+    return isinstance(val,Iterable)
 
 def ip2int(ip):
     """convert string IPv4 address to int"""
@@ -341,12 +346,12 @@ def reverseDns(ip):
 
 class TcpServices(object):
     @classmethod
-    def get_reverse_map(cls):
+    def get_srv_reverse_map(cls):
         if not hasattr(cls,'TCP_REVERSE'):
-            cls.TCP_REVERSE = dict((v,k) for k,v in cls.get_map().iteritems())
+            cls.TCP_REVERSE = dict((v,k) for k,v in cls.get_srv_map().iteritems())
         return cls.TCP_REVERSE
     @classmethod
-    def get_map(cls):
+    def get_srv_map(cls):
         if not hasattr(cls,'TCP_SERVICES'):
             try:
                 from scapy.all import TCP_SERVICES
@@ -355,11 +360,25 @@ class TcpServices(object):
                 cls.TCP_SERVICES = {}
         return cls.TCP_SERVICES
     @classmethod
+    def get_proto_reverse_map(cls):
+        if not hasattr(cls,'IP_REVERSE'):
+            cls.IP_REVERSE = dict((v,k) for k,v in cls.get_proto_map().iteritems())
+        return cls.IP_REVERSE
+    @classmethod
+    def get_proto_map(cls):
+        if not hasattr(cls,'IP_PROTOS'):
+            try:
+                from scapy.all import IP_PROTOS
+                cls.IP_PROTOS = dict((k,'%d'%IP_PROTOS[k]) for k in IP_PROTOS.keys())
+            except ImportError:
+                cls.IP_PROTOS = {'udp':17, 'tcp': 6}
+        return cls.IP_PROTOS
+    @classmethod
     def get_service(cls,port):
-        return cls.get_reverse_map().get('%s'%port)
+        return cls.get_srv_reverse_map().get('%s'%port)
     @classmethod
     def get_port(cls,service):
-        return cls.get_map().get('%s'%service)
+        return cls.get_srv_map().get('%s'%service)
 
 def flow2str(flow, fields = None, dns=False, services=False, color=True):
     if color:
@@ -391,10 +410,13 @@ def flow2str(flow, fields = None, dns=False, services=False, color=True):
 
 def scalar(x):
     """ convert to scalar if possible """
-    if (hasattr(x,'size') and x.size == 1) or (hasattr(x,'__len__') and len(x)==1) or (hasattr(x,'shape') and sum(x.shape)==1):
-        return x[0]
-    else:
-        return x
+    if (hasattr(x,'size') and x.size == 1) or (hasattr(x,'shape') and sum(x.shape)==1) or (hasattr(x,'__len__') and len(x)==1):
+        try:
+            from numpy import squeeze
+            return squeeze(x).item()
+        except ValueError:
+            pass
+    return x
 
 def get_filter(f):
     from xml.dom.minidom import parse, parseString

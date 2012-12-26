@@ -1,6 +1,9 @@
-from util import colorize,boldred,boldwhite,boldyellow,boldblue
+
+
+from util import *
+
 tmpl_colision = colorize(boldred,None,boldwhite) * '\r****** #collision# in %s (hash: %d)\n'
-tmpl_progress = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: %0.1f %% (dropped: %d of %d)        '
+tmpl_progress = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: %0.1f %% (dropped: %d of %d)'
 tmpl_progress2 = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: #100# %% (dropped: %d of %d)\n'
 
 class Flowizer(object):
@@ -16,7 +19,6 @@ class Flowizer(object):
     def __call__(self, data, flowids=None):
         from numpy import array,abs,vstack,squeeze
         from dataset import Table
-        from util import scalar,int2ip,flow2str
         from sys import stdout
 
         flow2str2 =  lambda x,f: flow2str(x,f,dns=self.reverse_dns,services=self.reverse_dns)
@@ -73,9 +75,10 @@ class Flowizer(object):
                 hashes[h] = t
             x['flow'] = h
             if negative:
-                for i in ('paylen','size'):
-                    if i in x:
-                        x[i] = negate # broadcasting lambda
+                if 'paylen' in x:
+                    x['paylen'] = negate # broadcasting lambda
+                elif 'size' in x:
+                    x['size'] = negate # broadcasting lambda
             l += 1
             if l%10 == 0 :
                 stdout.write( tmpl_progress % (100.*(l+dropped)/len(pay), dropped, (l+dropped))  )
@@ -84,16 +87,16 @@ class Flowizer(object):
         stdout.write( '\n%s\n'% [(int2ip(d),pd) for d,pd in droppedips])
         stdout.flush()
         if 'paylen' in pay:
-            pay = pay.select((pay.paylen!=0),order=('time',),retdset=True, fields=self.fields)
+            pay = pay.select(pay.paylen!=0,order='time',retdset=True, fields=self.fields)
         else:
-            pay = pay.select(None,order=('time',),retdset=True, fields=self.fields)
+            pay = pay.select(None,order='time',retdset=True, fields=self.fields)
 
-        d = array(tuple((j,)+k for j,k in hashes.items()))
         if not flowids:
-            qd = Table(data=d,fields=('flow',)+self.fflow)
-        elif not len(hashes):
-            return  flowids, pay
+            return Table(data=array(tuple((j,)+k for j,k in hashes.items())),fields=('flow',)+self.fflow),pay
         else:
-            qd = Table(data=vstack((flowids.data,d)),fields=('flow',)+self.fflow)
-        return  qd, pay
+            if not len(hashes):
+                return  flowids, pay
+            else:
+                d = array(tuple((j,)+k for j,k in hashes.items()))
+                return Table(data=vstack((flowids.data,d)),fields=('flow',)+self.fflow),pay
 
