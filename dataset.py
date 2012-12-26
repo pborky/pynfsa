@@ -3,7 +3,7 @@
 from util import *
 
 class H5Node(object):
-    def __init__(self, opt, h5 = None, grp = None ):
+    def __init__(self, opt, h5 = None, grp = None, auto_create_grps = True ):
         from tables import openFile,File
         if isinstance(h5,File):
             self.h5 = h5
@@ -12,6 +12,7 @@ class H5Node(object):
             self.h5 = openFile(db,'a')
         self.group = self.h5.root if grp is None else grp
         self.opt = opt
+        self.auto_create_grps = auto_create_grps
     def _keyfnc(self,g):
         return g._v_pathname.rsplit('/',1)[-1]
     def _itemfnc(self,g):
@@ -26,10 +27,21 @@ class H5Node(object):
     def iteritems(self):
         from itertools import imap
         return imap(self._itemfnc,self.h5.iterNodes(self.group))
+    def has_key(self,key):
+        return key in self
+    def iterkeys(self):
+        return iter(self)
+    def itervalues(self):
+        from itertools import imap
+        return imap(self._get_item,self.h5.iterNodes(self.group))
     def keys(self):
         return  [ i for i in iter(self) ]
+    def values(self):
+        return  [ v for v in self.itervalues() ]
     def items(self):
         return  [ i for i in self.iteritems() ]
+    def get(self,key,d=None):
+        return self[key] if key in self else d
     def __contains__(self, item):
         from tables import NoSuchNodeError
         try:
@@ -82,7 +94,12 @@ class H5Node(object):
             return self._get_item(item)
         else:
             path,name = self._get_absolute_path(item)
-            item = self.h5.getNode(path,name)
+            try:
+                item = self.h5.getNode(path,name)
+            except NoSuchNodeError:
+                if not self.auto_create_grps:
+                    raise
+                item =  self.h5.createGroup(path,name,createparents=True)
             return self._get_item(item)
     def __setitem__(self, key, value):
         path,name = self._get_absolute_path(key)
