@@ -4,7 +4,6 @@ from functools import partial
 from itertools import imap,ifilter
 
 def combinator(*fncs):
-    itemgetter(
     return lambda *args:getitem(
             reduce(lambda acc,fnc:(fnc(*acc),), 
                    reversed(fncs), 
