@@ -50,46 +50,45 @@ class H5Node(object):
                     return result
             else:
                 return scalar(item)
-    def __getitem__(self, item):
-        from tables import Node,NoSuchNodeError
-        if isinstance(item,Node):
-            return self._get_item(item)
-        try:
-            item = self.h5.getNode(self.group,item)
-            return self._get_item(item)
-        except NoSuchNodeError:
-            item = item.rsplit('/',1)
-            if self.group._v_pathname != '/':
-                if len(item)>1:
-                    item[0] = self.group._v_pathname+'/'+ item[0]
-                else:
-                    item = (self.group._v_pathname, item[0])
-            else:
-                if len(item)>1 and  item[0][0] != '/':
-                    item[0] = '/'+ item[0]
-                if not len(item)>1 :
-                    item = (self.group._v_pathname, item[0])
 
-            return H5Node(self.opt, h5=self.h5, grp=self.h5.createGroup(*item,createparents=True))
-    def __setitem__(self, key, value):
-        from collections import Iterable
-        if key[0] == '/':
-            raise ValueError("the ``/`` character is not allowed in object names: '%s'"%key)
+    def _get_current_path(self):
+        if self._is_root():
+            return '/'
+        else:
+            return self.group._v_pathname.rstrip('/')
+
+    def _is_root(self):
+        return self.group._v_pathname  == '/'
+
+    def _get_absolute_path(self,key):
+        if key[0] == '/' and not self._is_root():
+            raise ValueError("the ``/`` character is not allowed in object names of non-root group: '%s'"%key)
         path = key.rsplit('/',1)
         if len(path)==2:
             path,name = path
-            grp = self[path].group
+            if self._is_root():
+                path =  '/' + path.lstrip('/')
+            else:
+                path = self._get_current_path() +'/' + path
         else:
             name, = path
-            grp = self.group
-        try:
-            if isinstance(value,Iterable) :
-                self.h5.createArray(grp,name,value)
-            else:
-                setattr(grp,name,value)
-        except TypeError:
-            setattr(grp,name,value)
-        #print self.keys()
+            path = self._get_current_path()
+        return  path,name
+
+    def __getitem__(self, item):
+        from tables import Node,NoSuchNodeError
+
+        if isinstance(item,Node):
+            return self._get_item(item)
+        else:
+            path,name = self._get_absolute_path(item)
+            item = self.h5.getNode(path,name)
+            return self._get_item(item)
+    def __setitem__(self, key, value):
+        path,name = self._get_absolute_path(key)
+        if not is_iterable(value):
+            value = value,
+        self.h5.createArray(path,name,value, createparents=True)
     def close(self):
         self.h5.close()
     def handle_exit(self, try_fnc, *arg,**kwarg):
