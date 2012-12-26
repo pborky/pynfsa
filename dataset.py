@@ -1,4 +1,6 @@
-__author__ = 'peterb'
+
+
+from util import *
 
 class H5Node(object):
     def __init__(self, opt, h5 = None, grp = None ):
@@ -39,7 +41,6 @@ class H5Node(object):
         self.h5.getNode(self.group,key)._f_remove(True)
     def _get_item(self,item):
         from tables import Node,Group
-        from util import scalar
         if isinstance(item,Node):
             if isinstance(item,Group):
                 result = H5Node(self.opt,h5=self.h5, grp=item)
@@ -60,7 +61,7 @@ class H5Node(object):
             item = item.rsplit('/',1)
             if self.group._v_pathname != '/':
                 if len(item)>1:
-                    item[0] = self.group._v_pathname+ item[0]
+                    item[0] = self.group._v_pathname+'/'+ item[0]
                 else:
                     item = (self.group._v_pathname, item[0])
             else:
@@ -82,9 +83,10 @@ class H5Node(object):
             name, = path
             grp = self.group
         try:
-            if not isinstance(value,Iterable):
-                value=value,
-            self.h5.createArray(grp,name,value)
+            if isinstance(value,Iterable) :
+                self.h5.createArray(grp,name,value)
+            else:
+                setattr(grp,name,value)
         except TypeError:
             setattr(grp,name,value)
         #print self.keys()
@@ -119,10 +121,9 @@ class H5Node(object):
                 print '%s`%s [%s]' % (padding, cyan(key), val )
 
     def printTree(self, padding= '', last=False,maxdepth=3,maxcount=50):
-        from fabulous.color import red,blue,green,cyan,yellow,bold
 
         if maxdepth is not None and maxdepth<0:
-            print padding[:-1] + ' `'+bold(blue('(...)'))
+            print padding[:-1] + ' `'+bold(blue('...'))
             return
 
         if last:
@@ -134,16 +135,16 @@ class H5Node(object):
         count = len(self)
         large = False
         if maxcount is not None and count>maxcount:
-            count=maxcount
+            count=maxcount+1
             large = True
         if self is None or not count:
-            print padding, ' `-'+red('(empty)')
+            print padding, ' `'+boldblack('[empty]')
         else:
             for key, val in self.iteritems():
                 count -= 1
                 if count==0 and large:
                     #print padding + ' |-'+(cyan('(...)'))
-                    print padding + ' '+'(...)'
+                    print padding + ' '+'`...'
                     break
                 self._printNode(key,val,padding=padding+' |',last=not count,maxdepth=maxdepth-1,maxcount=maxcount)
 
@@ -159,7 +160,7 @@ class Table(object):
         from numpy import array,ndarray
         if h5 is not None:
             self.h5 = h5
-            self.data = h5['data'][:]
+            self.data = h5['data'][...]
             self.fields = tuple(h5['fields'])
         elif data is not None and fields is not None:
             self.data = data if isinstance(data,ndarray) else array(data)
@@ -212,15 +213,14 @@ class Table(object):
         d = self.select(pred,fields=fields,retdset=retdset)
         self.data,self.fields = d.data,d.fields
     def __setitem__(self, key, value):
+        if not len(self):
+            return
         pred,fields,retdset = self._parse_key(key)
         return self.set_fields(pred, fields, value)
     def __contains__(self,item):
         return item in self.fields
     def __iter__(self):
-        def iterator():
-            for i in range(len(self)):
-                yield Table(data=self.data[i,...],fields=self.fields)
-        return iterator()
+        return ( self[i] for i in xrange(len(self)) )
     def keys(self):
         return self.fields
     def __str__(self):
@@ -235,7 +235,9 @@ class Table(object):
         # rows
         if callable(predicate):
             pred = predicate (self.data, self._getfield)
-        elif isinstance(predicate,(int,slice)) or predicate is Ellipsis:
+        elif isinstance(predicate,int):
+            pred =  slice(predicate,predicate+1)
+        elif isinstance(predicate, slice) or predicate is Ellipsis:
             pred =  predicate
         else:
             pred = Ellipsis
@@ -253,15 +255,10 @@ class Table(object):
             fields = self.fields
             fldidx = Ellipsis
 
-        #combine
-        if isinstance(fldidx,ndarray) and isinstance(pred,ndarray):
-            idx = pred[...,newaxis]&fldidx[newaxis,...]
-        else:
-            idx = (pred,fldidx)
-
-        return idx,fields
-
-    def select(self, predicate, order=None, group= None, retdset=None, fields=None, **kwargs):
+        return (pred,fldidx),fields
+    def squeeze(self):
+        return self.data.squeeze()
+    def select(self, predicate, order=None, retdset=None, fields=None, **kwargs):
         """Select submatrix based on predicate and fields.
             Input:
                 predicate - An subclass of Predicate. It generates boolean vector to be used as indexig vector.
@@ -276,10 +273,13 @@ class Table(object):
                 r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
                 # select submatrix containing time and size columns and rows where size is in interval [10,15)
         """
-        from numpy import argsort
+        from numpy import argsort,ndarray
 
         idx,fields = self._get_indexing(predicate,fields)
-        result = self.data[idx]
+        if isinstance(idx[0],ndarray) and isinstance(idx[1],ndarray):
+            result = self.data[idx[0],...][...,idx[1]]
+        else:
+            result = self.data[idx]
 
         if order is not None and order in fields:
             result = result[argsort( result[...,self.fields.index(order)] ),...]
@@ -306,7 +306,6 @@ class Table(object):
         from numpy import ndarray
 
         idx,fields = self._get_indexing(predicate,fields)
-
         # evaluate
         if callable(value):
             self.data[idx] = value(self.data[idx])
