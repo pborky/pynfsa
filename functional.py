@@ -1,17 +1,14 @@
-
 from operator import *
 from math import *
 from functools import partial
 from itertools import imap,ifilter
 
 def combinator(*fncs):
-    return lambda *args: reduce(
-        id,
-        reduce(
-            lambda acc,fnc:(fnc(*acc),), 
-            reversed(fncs), 
-            args)
-    )
+    itemgetter(
+    return lambda *args:getitem(
+            reduce(lambda acc,fnc:(fnc(*acc),), 
+                   reversed(fncs), 
+                   args), 0)
 
 def flip(f):
     return lambda *a: f(*reversed(a))
