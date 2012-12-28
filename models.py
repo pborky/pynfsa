@@ -1,50 +1,251 @@
 
+from __future__ import print_function
 from util import *
 
 import numpy as np
 import scipy.stats as st
 from functional import *
 
+def evaluate(opt, computations, h5grp, fit=None, binarize=None, model=None, legit=None, malicious=None, model_legit=None,steps=None):
+    m = Modeler(opt,computations,steps=steps)
+    if 'annot' not in h5grp:
+        raise Exception('expecting annotated dataset')
+    fit,binarize,classes = m._get_labeling(h5grp['annot'],model=model, legit=legit, malicious=malicious, model_legit=model_legit)
+    return m,m(fit=fit, binarize=binarize, h5grp=h5grp)
+
+def plot_roc(res, title=''):
+    from matplotlib.pylab import plt
+    from math import ceil
+    from functional import add
+    colors = [ 'r-','g-', 'b-', 'c-', 'm-', 'rx-','gx-', 'bx-', 'cx-', 'mx-', 'rx-','go-', 'bo-', 'co-', 'm-', 'g.', 'b.', 'c.', 'm.'   ]
+    colors*=int(1+ceil(20 / len(colors) ))
+    idx = list( np.argsort([np.mean(auc) for _, auc, _ in res]) )
+    values = reduce(add,( [fpr,tpr,colors.pop(0)] for fpr, tpr, thr in (d[0] for _, _, d in (res[i] for i in reversed(idx))) ),[])
+    names =  list( u'%s [auc=%.2f\u00b1%.2f]'%(n,np.mean(auc),np.std(auc)) for n, auc, _ in (res[i] for i in reversed(idx)) )
+    ax1 = plt.subplot2grid((5,1), (1, 0), rowspan=4)
+    ax2 = plt.subplot2grid((5,1), (0, 0),frameon=False,xticks=[],yticks=[])
+    ln = ax1.plot( *values )
+    ax2.legend(ln, names, loc=10, ncol = 2, mode='expand', prop={'size': 10})
+    plt.show()
+
+
 def fapply(fnc, *args, **kwargs):
-    kwstr = ( '%s=%s'%i for i in  kwargs.iteritems())
-    fkey = lambda fnc,arg: '%s' % fnc.__name__
+    kwstr = ['%s=%s'%i for i in  kwargs.iteritems()]
+    fkey = lambda fnc: '%s' % fnc.__name__
+    fargs = lambda arg: arg if is_iterable(arg) and not isinstance(arg,str) else (arg,)
+    fstring = lambda fnc,arg: '%s(%s)' %(fkey(fnc), ','.join([str(s) for s in fargs(arg)]+list(kwstr)))
     if len(args):
-        fargs = lambda arg: arg if is_iterable(arg) and not isinstance(arg,str) else (arg,)
-        fstring = lambda fnc,arg: '%s(%s)' %(fnc.__name__, ','.join([str(s) for s in fargs(arg)]+list(kwstr)))
-        return [ (fkey(fnc,a), fstring(fnc,a), fnc(*fargs(a))) for a in args ]
+        return [ (fkey(fnc), fstring(fnc,a), fnc(*fargs(a))) for a in args ]
     else:
-        return  (fkey(fnc,None), '%s(%s)'%(fnc.__name__, ','.join(kwstr)) ,fnc()),
+        return  (fkey(fnc), fstring(fnc,()) ,fnc()),
 
 def fiterate( *args):
     from itertools import product
-    from sklearn.pipeline import Pipeline
-    return [ (','.join(name for key,name,fnc in cmds), Pipeline([(key,fnc) for key,name,fnc in cmds])) for cmds in product(*args) ]
+    return [ (','.join(name for key,name,fnc in cmds), PipelineFixd([(key,fnc) for key,name,fnc in cmds])) for cmds in product(*args) ]
 
 class Modeler(object):
-    def __init__(self,opt, computations):
+    def __init__(self,opt, computations=None, steps=None):
         self.opt = opt
-        from sklearn.mixture import DPGMM as GMM
+        from sklearn.mixture import GMM as GMM,DPGMM
         from sklearn.decomposition import PCA
         from sklearn.preprocessing import Scaler
 
         self.steps = {
             'Scaler': fapply( Scaler ),
-            'Bands': fapply( FreqBandsTransformer, 3, 10, 25, (5,True), (10,True) ),
-            'Threshold': fapply( FreqThresholdTransformer, 0 ),
-            'MomentumMVKS': fapply( MomentumTtransformer, 'mvks'),
-            'GMM' : fapply( GMM, 1, 5, covariance_type='full', verbose=False, n_iter=40 ),
-            'Mahal': fapply( MahalanobisEstimator, False ),
-            'PCA': fapply( PCA, 3, 10, 25  )
+            'Bands': fapply( FreqBands, 2,5,10 ),
+            'BandsLg': fapply( FreqBands, 2,5,10, log_scale=True ),
+            'Threshold': fapply( FreqThresh, 0 ),
+            'MomentumMVKS': fapply( Momentum, 'mvks'),
+            'GMM' : fapply( GMM, 1, 5, covariance_type='diag', n_iter=40 ),
+            'DPGMM' : fapply( DPGMM, 1, 5, covariance_type='diag', n_iter=40 ),
+            'Mahal': fapply( Mahalanobis, False ),
+            'PCA': fapply( PCA, 3, 10 ),
+            'PCAw': fapply( PCA, 3, 10 , whiten=True )
         }
-        methods = self._methods(computations)
+        if computations is None: computations = [
+            ('Bands','GMM'),
+            ('Bands','Mahal'),
+            ('Threshold','Mahal'),
+            ('Threshold','MomentumMVKS', 'Mahal' ),
+            ('Threshold','MomentumMVKS', 'Scaler', 'Mahal' ),
+            ('Threshold','PCA', 'Scaler', 'Mahal' ),
+            ('Threshold','PCA', 'Scaler', 'GMM' )
+        ]
+        self.methods = self._methods(computations,steps=steps)
 
-    def _methods(self,computations):
-        return dict( reduce(add, ( fiterate(*[ self.steps.get(m) for m in c ])  for c in computations ) ) )
+    def _methods(self,computations,steps=None):
+        if steps is None: steps = self.steps
+        return dict( reduce(add, ( fiterate(*[ self.steps[m] for m in c if m in self.steps])  for c in computations ) ) )
 
-    def __call__(self, h5grp = None):
 
-        samples = h5grp
+    def _get_labeling(self,h5grp,model=None,legit=None,malicious=None,model_legit=None):
+        annot = h5grp['annotations'][:]
+        filter = []
+        if model is not None and legit is not None and malicious is not None:
+            model_legit = not set(model).intersection(set(malicious))
+            filter =  set(model + legit+ malicious)
+        print (colorize(boldblue, green) * '#annotations detected#:' )
+        annotations = {}
+        for i,type, caption in ((int(scalar(a['annot'])),scalar(a['type']),scalar(a['caption'])) for a in annot):
+            if i not in  filter:
+                continue
+            if type == 'FILTER_LEGITIMATE':
+                print (colorize(boldyellow, green) * '[%d] %s : %s' % (i, type, caption))
+            elif type == 'FILTER_MALICIOUS':
+                print (colorize(boldyellow, boldred) * '[%d] %s : %s' % (i, type, caption))
+            else:
+                print (colorize(boldyellow, yellow) * '[%d] %s : %s' % (i, type, caption))
+            annotations[i] = (type, caption)
+        def get_classes(msg):
+            model = []
+            while not model:
+                s = raw_input(msg)
+                model = [k for k,v in annotations.iteritems() if s in v]
+                if not model:
+                    try:
+                        model = [ j for j in ( int(i.strip()) for i in  s.split(',') ) if j in annotations]
+                    except KeyboardInterrupt:
+                        break
+                    except :
+                        pass
+            return model
+        if model is None: model  = get_classes('classes included in model: ')
+        if legit is None: legit  = get_classes('normal classes: ')
+        if malicious is None: malicious  = get_classes('anomal classes: ')
+        if model_legit is None:
+            while model_legit is None:
+                try: model_legit = bool(int(raw_input('model is normal: ')))
+                except KeyboardInterrupt: break
+                except : pass
 
+        print (colorize(boldblue, green) * '#annotations used#:' )
+        print(colorize(green if model_legit else boldred, green, boldred ) *
+              'model=%s, legit=%s, malicious=%s' %
+              (str(model), str(legit), str(malicious), ))
+
+        classes = {}
+        if model_legit:
+            classes.update((i,1) for i in legit if i not in model)
+            classes.update((i,-1) for i in malicious if i not in model)
+            classes.update((i,1) for i in model)
+        else:
+            classes.update((i,-1) for i in legit if i not in model)
+            classes.update((i,1) for i in malicious if i not in model)
+            classes.update((i,1) for i in model)
+
+        binarize = np.vectorize(lambda x: classes[x] if x in classes else 0)
+
+        return model, binarize, classes
+    def _eval(self, score_raw, ybin):
+        from sklearn.metrics import roc_curve,auc
+        idx = ybin != 0
+        ybin = ybin[idx]
+        score_raw = score_raw[idx]
+        fpr, tpr, thresholds = roc_curve(ybin, score_raw)
+        return auc(fpr, tpr), (fpr, tpr,thresholds)
+
+    def _crossval(self, method, X, y, binarize=None, fit=None, folds = 10, name='', **params):
+        from sklearn.cross_validation import StratifiedKFold
+
+        fit = np.array(fit)
+        y = np.copy(y.squeeze())
+
+        ybin = binarize(y)
+        idx = ybin != 0
+
+        X = X[idx,...]
+        y = y[idx]
+        ybin = ybin[idx]
+
+        y_uni,y_sorted =  np.unique(y, return_inverse=True)
+        y_cnt = np.bincount(y_sorted)
+        y_wrong = y_uni[y_cnt<=folds]
+
+        print(colorize(cyan, blue) * '#evaluating# %s:' % (name, ))
+
+        if len(y_wrong):
+            if np.any(fit[...,np.newaxis] == y_wrong):
+                raise Exception('The fitted class has less than %d members, which is too few. %s' % (folds,str(y_wrong)))
+            print(colorize(None,boldred,red)*'## #warning#: #%d classes has less than %d members, discaring them#'%(len(y_wrong),folds))
+            idx = np.all(y[np.newaxis,...] != y_wrong[...,np.newaxis],0)
+            X = X[idx,...]
+            y = y[idx]
+            ybin = ybin[idx]
+
+        idx = np.all(np.isfinite(X),1)
+        X = X[idx,...]
+        y = y[idx]
+        ybin = ybin[idx]
+
+        fit = np.any(y == fit[...,np.newaxis],0)
+        ybincls = np.unique(ybin[ybin!=0])
+
+        modelcnt = np.sum(fit)
+        negcnt = np.sum(ybin==ybincls[0])
+        poscnt = np.sum(ybin==ybincls[1])
+
+
+        print(colorize(boldyellow, boldblue, boldgreen, boldred) *
+              '\t#using# #%d samples for model#, #%d positive# and #%d negative# samples for validation ' %
+              (modelcnt, poscnt, negcnt))
+
+        #unknown = y==-1
+        s=[]; roc = []
+        for train, test in StratifiedKFold(y, folds, indices=False):
+            train &= fit
+            #test &= unknown
+            try:
+                method.fit(X[train,...], **params)
+                scores = method.score(X[test,...], y[test])
+                auc,(fpr, tpr,thresholds) = self._eval(scores.squeeze(),ybin[test])
+                s.append(auc.mean())
+                roc.append((fpr, tpr,thresholds))
+            except FitError:
+                s.append(-np.inf)
+
+        print(colorize(cyan,boldyellow, yellow) * u'\t#auc#=%.2f#\u00b1%.2f#' % (np.mean(s),np.std(s)))
+
+        return np.array(s),roc
+
+    def __call__(self, h5grp = None, fit=None, binarize = None):
+
+        sampl = h5grp
+        annot = sampl['annot']
+
+        X = sampl['X'][...]
+        y = sampl['y'][...]
+        freqs = sampl['freqs'][...]
+
+        #flowids = sampl['flowids'][...]
+
+        annotations = annot['annotations'][...]
+        lbl = annot['y'][...]
+        aflowids = annot['flowids'][...]
+
+        #from models import Modeler
+        #sampl = h5['/samples/data_psd_0.003300_200_simulated/']
+        #annot = sampl['annot']
+        #X = sampl['X'][...]
+        #y = sampl['y'][...]
+        #lbl = annot['y'][...]
+        #freqs = sampl['freqs'][...]
+        #annotations = annot['annotations'][...]
+        #binary = {'FILTER_MALICIOUS':1, 'FILTER_LEGITIMATE': -1}
+        #binary = dict((int(scalar(a['annot'])),binary.get(scalar(a['type']),0))  for a in annotations)
+        #binarize = np.vectorize(lambda x: binary[x] if x in binary else 0)
+        #binarize = np.vectorize(lambda x: 1 if x in (82,) else -1 )
+        #m = Modeler(opt)
+        classes = {}
+        if fit is None or binarize is None:
+            fit,binarize,classes = self._get_labeling(annot)
+
+        #methods = self._methods(computations)
+        res = []
+        for k,v in self.methods.items():
+            #print k
+            s,roc = self._crossval(v, X , lbl, binarize , fit, name=k, FreqBands__freqs=freqs, FreqThresh__freqs=freqs)
+            res.append((k,s,roc))
+        return (fit,binarize,classes), res
 
 
 
@@ -107,9 +308,6 @@ class LinearTransformer(BaseEstimator, TransformerMixin):
             array-like X transformed
         """
         from sklearn.utils.validation import warn_if_not_float
-
-        X = np.asarray(X)
-        warn_if_not_float(X, estimator=self)
         return np.dot(X,self.A)
 
 class FreqBaseTransformer(LinearTransformer):
@@ -124,14 +322,15 @@ class FreqBaseTransformer(LinearTransformer):
         """Returns transforamtion matrix based on impelentation
             of the `get_A`. This is internal class.
         """
-        return self.get_A(X,freqs)
+        A = self.get_A(X,freqs)
+        return A
     def get_A(self, X, freqs):
         """Returns transforamtion matrix.
             To be implemented in subclass
         """
         raise NotImplementedYet()
 
-class FreqThresholdTransformer(FreqBaseTransformer):
+class FreqThresh(FreqBaseTransformer):
     def __init__(self,f_thresh, f_thresh_hi=None):
         """Creates projection based on frequency thresholds.
             The frequency components that are greater then threshold
@@ -146,7 +345,7 @@ class FreqThresholdTransformer(FreqBaseTransformer):
             f_thresh_hi : number , upper threshold
 
         """
-        super(FreqThresholdTransformer, self).__init__()
+        super(FreqThresh, self).__init__()
         self.f_thresh = f_thresh
         self.f_thresh_hi = f_thresh_hi
     def get_A(self, X, freqs):
@@ -161,8 +360,8 @@ class FreqThresholdTransformer(FreqBaseTransformer):
         A[idx,...] = np.eye(n_new_features)
         return A
 
-class FreqBandsTransformer(FreqBaseTransformer):
-    def __init__(self,n_bands, log_scale = False):
+class FreqBands(FreqBaseTransformer):
+    def __init__(self,n_bands, log_scale = False, mean=False):
         """Creates projection based on frequency band filtering.
             The frequency spectrum is divided into equal or logatitmic intervals
             in which are spectral components summed.
@@ -174,9 +373,10 @@ class FreqBandsTransformer(FreqBaseTransformer):
                         default: False
 
         """
-        super(FreqBandsTransformer, self).__init__()
+        super(FreqBands, self).__init__()
         self.n_bands = n_bands
         self.log_scale = log_scale
+        self.mean = mean
     def get_A(self, X, freqs):
         """Returns transformation matrix. Used internally.
         """
@@ -187,10 +387,13 @@ class FreqBandsTransformer(FreqBaseTransformer):
         bounds_low = bands[:-1][np.newaxis,...]
         bounds_hi = bands[1:][np.newaxis,...]
         freqs = freqs[...,np.newaxis]
-        A = ((freqs > bounds_low) & (freqs <= bounds_hi))
+        A = 1.*((freqs > bounds_low) & (freqs <= bounds_hi))
+        if self.mean:
+            Asum = np.sum(A,0)
+            A[...,Asum!=0] /=  Asum[Asum!=0][np.newaxis,...]
         return A
 
-class MomentumTtransformer(BaseEstimator, TransformerMixin):
+class Momentum(BaseEstimator, TransformerMixin):
     _moments_map = {'m':np.mean, 'v':np.var , 'k': st.kurtosis, 's': st.skew }
     def __init__(self, moments = 'mvks'):
         """ Computation of the moments of an data instance result in
@@ -233,12 +436,9 @@ class MomentumTtransformer(BaseEstimator, TransformerMixin):
                 given in initialization of the object
         """
         from sklearn.utils.validation import warn_if_not_float
+        return np.hstack(tuple(m(X,axis=1)[...,np.newaxis] for m in self.moment_fnc))
 
-        X = np.asarray(X)
-        warn_if_not_float(X, estimator=self)
-        return np.hstack(tuple(m(X,axis=1) for m in self.moment_fnc))
-
-class MahalanobisEstimator (BaseEstimator):
+class Mahalanobis (BaseEstimator):
     def __init__(self, robust=False):
         """Mahalanobis distance estimator. Uses Covariance estimate
             to compute mahalanobis distance of the observations
@@ -254,6 +454,7 @@ class MahalanobisEstimator (BaseEstimator):
         else:
             from sklearn.covariance import MinCovDet as CovarianceEstimator #
         self.model = CovarianceEstimator()
+        self.cov = None
     def fit(self, X, y=None, **params):
         """Fits the covariance model according to the given training
             data and parameters.
@@ -269,10 +470,9 @@ class MahalanobisEstimator (BaseEstimator):
             self : object
                 Returns self.
         """
-        self.model.fit(X)
+        self.cov = self.model.fit(X)
         return self
-
-    def score(self, X, assume_centered=False):
+    def score(self, X, y=None):
         """Computes the mahalanobis distances of given observations.
 
             The provided observations are assumed to be centered. One may want to
@@ -288,7 +488,49 @@ class MahalanobisEstimator (BaseEstimator):
             mahalanobis_distance: array, shape = [n_observations,]
                 Mahalanobis distances of the observations.
         """
-        return self.model.mahalanobis(X, assume_centered)
+
+        #return self.model.score(X,assume_centered=True)
+        return self.model.mahalanobis(X-self.model.location_) ** 0.33
+
+from sklearn.pipeline import Pipeline
+
+class  PipelineFixd (Pipeline):
+    def _pre_transform(self, X, y=None, **fit_params):
+        fit_params_steps = dict((step, {}) for step, _ in self.steps)
+        for pname, pval in fit_params.iteritems():
+            pname2 = pname.split('__', 1)
+            if len(pname2) == 1:
+                continue
+            else:
+                step, param = pname2
+                if  step not in  fit_params_steps:
+                    continue
+                fit_params_steps[step][param] = pval
+        Xt = X
+        for name, transform in self.steps[:-1]:
+            if hasattr(transform, "fit_transform"):
+                Xt = transform.fit_transform(Xt, y, **fit_params_steps[name])
+            else:
+                Xt = transform.fit(Xt, y, **fit_params_steps[name])\
+                .transform(Xt)
+        return Xt, fit_params_steps[self.steps[-1][0]]
+
+    def fit(self, X, y=None, **params):
+        """Fit all the transforms one after the other and transform the
+        data, then fit the transformed data using the final estimator.
+        """
+        Xt, fit_params = self._pre_transform(X, y, **params)
+        self.steps[-1][-1].fit(Xt, y=y, **fit_params)
+        return self
+
+    def score(self, X, y=None):
+        """Applies transforms to the data, and the score method of the
+        final estimator. Valid only if the final estimator implements
+        score."""
+        Xt = X
+        for name, transform in self.steps[:-1]:
+            Xt = transform.transform(Xt)
+        return self.steps[-1][-1].score(Xt)
 
 class base:
     def __init__(self, **kwargs):
