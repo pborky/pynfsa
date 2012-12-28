@@ -238,33 +238,21 @@ def get_samples(opt, h5= None):
     sampler(samples,flows3,id3)
 
 def get_models(opt, h5= None):
-    from models import Modeler
+    from models import evaluate,plot_roc,fapply,Mahalanobis,Momentum,FreqThresh,FreqBands
+    from sklearn.preprocessing import Scaler
+    from sklearn.decomposition import PCA
+    from sklearn.mixture import GMM,DPGMM
     from labeling import Labeler
+    import re
 
     if not h5:
         h5 = H5Node(opt)
     samples = h5['samples']
 
-    computations = [
-        ('Bands','GMM'),
-        ('Bands','Mahal'),
-        ('Threshold','Mahal'),
-        ('Threshold','MomentumMVKS', 'Mahal' ),
-        ('Threshold','MomentumMVKS', 'Scaler', 'Mahal' ),
-        ('Threshold','PCA', 'Scaler', 'Mahal' ),
-        ('Threshold','PCA', 'Scaler', 'GMM' )
-    ]
-
-    modeler = Modeler(opt,computations)
-
     print(colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database)
     datasets = []
     i = 0
-    for k in samples.keys():
-        if not k.startswith('data'):
-            continue
-        sampl = samples[k]
-
+    for k,sampl in samples.iteritems():
         if  '.srate' not in sampl or  '.wndsize' not in sampl :
             continue
 
@@ -272,6 +260,9 @@ def get_models(opt, h5= None):
         wndsize = scalar(sampl['.wndsize'])
 
         if opt.srate and  srate not in opt.srate or opt.window and wndsize not in opt.window:
+            continue
+
+        if opt.sample and not re.findall(opt.sample, k):
             continue
 
         print(colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize))
@@ -288,6 +279,37 @@ def get_models(opt, h5= None):
     else:
         selected = datasets.values()
 
+    steps = {
+        'Scaler': fapply( Scaler ),
+        'Bands': fapply( FreqBands, 2,5,10 ),
+        'BandsLg': fapply( FreqBands, 2,5,10, log_scale=True ),
+        'Threshold': fapply( FreqThresh, 0 ),
+        'MomentumMVKS': fapply( Momentum, 'mvks'),
+        'GMM' : fapply( GMM, 1, 5, covariance_type='diag', n_iter=40 ),
+        'DPGMM' : fapply( DPGMM, 1, 5, covariance_type='diag', n_iter=40 ),
+        'Mahal': fapply( Mahalanobis, False ),
+        'PCA': fapply( PCA, 3, 10 ),
+        'PCAw': fapply( PCA, 3, 10 , whiten=True )
+    }
+    computations = [
+        ('Bands', 'DPGMM'),
+        #('BandsLg', 'DPGMM'),
+        #('Bands','DPGMM'),
+        #('Bands', 'Mahal'),
+        ('Threshold','DPGMM'),
+        #('Threshold','Scaler','DPGMM'),
+        #('Threshold', 'Scaler','Mahal'),
+        #('Threshold', 'Mahal'),
+        #('Threshold', 'DPGMM'),
+        ('Threshold','MomentumMVKS', 'Mahal' ),
+        #('Threshold','MomentumMVKS', 'Scaler', 'Mahal' ),
+        ('Threshold','MomentumMVKS',  'DPGMM' ),
+        #('Threshold','PCA', 'Scaler', 'Mahal' ),
+        #('Threshold', 'PCA', 'Mahal' ),
+        ('Threshold', 'PCA', 'DPGMM' ),
+        #('Threshold', 'PCAw', 'DPGMM' )
+    ]
+
     for k,sampl,srate,wndsize in selected:
 
         print('## processing %s'%k)
@@ -295,15 +317,21 @@ def get_models(opt, h5= None):
         if not 'annot' in sampl:
             labeler = Labeler(opt)
             labeler.prepare()
-            flows,annots,lbl = labeler(sampl)
+            labeler(sampl)
 
+        fit, binarize = None, None
+        #sampl, = [ h5[s] for s in ('/samples/data_psd_0.003300_200_simulated/', '/samples/data_psd_100.000000_200_simulated/') if s in h5 ]
 
-        #labeling,labeling2,labeling3 = get_labeling(opt,id3)
+        intornone = lambda x: int(x) if x.isdigit() else None
 
-        #y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
-        print('## please hold on')
+        model= filter(None,map(intornone,(m.strip() for m in opt.model.split(',')))) if opt.model else None  #[33, 34, 67, 82, 85]   #http
+        legit= filter(None,map(intornone,(m.strip() for m in opt.legit.split(',')))) if opt.legit else None  #[33, 34, 67, 82, 85]
+        malicious= filter(None,map(intornone,(m.strip() for m in opt.malicious.split(',')))) if opt.malicious else None  #[80]              # woodfucker
+        if opt.computations:
+            computations = [tuple(m.strip() for m in comp.split(',')) for comp in opt.computations]
 
-        modeler(sampl)
+        m,((fit, binarize, classes), res) = evaluate(opt, computations, sampl, fit=fit, binarize=binarize,steps=steps,model=model,legit=legit,malicious=malicious)
+        plot_roc(res,'ROC curves')
 
 if __name__=='__main__':
     from dataset import Table,H5Node

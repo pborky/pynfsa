@@ -22,10 +22,13 @@ def plot_roc(res, title=''):
     idx = list( np.argsort([np.mean(auc) for _, auc, _ in res]) )
     values = reduce(add,( [fpr,tpr,colors.pop(0)] for fpr, tpr, thr in (d[0] for _, _, d in (res[i] for i in reversed(idx))) ),[])
     names =  list( u'%s [auc=%.2f\u00b1%.2f]'%(n,np.mean(auc),np.std(auc)) for n, auc, _ in (res[i] for i in reversed(idx)) )
+    plt.subplots_adjust(left=.05, bottom=.05, right=.95, top=.95, wspace=.4, hspace=.4)
     ax1 = plt.subplot2grid((5,1), (1, 0), rowspan=4)
     ax2 = plt.subplot2grid((5,1), (0, 0),frameon=False,xticks=[],yticks=[])
     ln = ax1.plot( *values )
-    ax2.legend(ln, names, loc=10, ncol = 2, mode='expand', prop={'size': 10})
+    ax1.set_xlabel('false positive rate')
+    ax1.set_ylabel('true positive rate')
+    ax2.legend(ln, names, loc=10, ncol = 1, mode='expand', prop={'size': 10})
     plt.show()
 
 
@@ -80,14 +83,14 @@ class Modeler(object):
 
     def _get_labeling(self,h5grp,model=None,legit=None,malicious=None,model_legit=None):
         annot = h5grp['annotations'][:]
-        filter = []
+        filter = None
         if model is not None and legit is not None and malicious is not None:
             model_legit = not set(model).intersection(set(malicious))
             filter =  set(model + legit+ malicious)
         print (colorize(boldblue, green) * '#annotations detected#:' )
         annotations = {}
         for i,type, caption in ((int(scalar(a['annot'])),scalar(a['type']),scalar(a['caption'])) for a in annot):
-            if i not in  filter:
+            if filter is not None and i not in  filter:
                 continue
             if type == 'FILTER_LEGITIMATE':
                 print (colorize(boldyellow, green) * '[%d] %s : %s' % (i, type, caption))
@@ -161,7 +164,7 @@ class Modeler(object):
         y_cnt = np.bincount(y_sorted)
         y_wrong = y_uni[y_cnt<=folds]
 
-        print(colorize(cyan, blue) * '#evaluating# %s:' % (name, ))
+        print(colorize(cyan, boldcyan) * '#evaluating# %s:' % (name, ))
 
         if len(y_wrong):
             if np.any(fit[...,np.newaxis] == y_wrong):
@@ -179,6 +182,8 @@ class Modeler(object):
 
         fit = np.any(y == fit[...,np.newaxis],0)
         ybincls = np.unique(ybin[ybin!=0])
+        if len(ybincls) != 2:
+            raise Exception('Expecting binary classification instead of:' + str(ybincls))
 
         modelcnt = np.sum(fit)
         negcnt = np.sum(ybin==ybincls[0])

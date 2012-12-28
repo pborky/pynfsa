@@ -100,6 +100,11 @@ def opts(args=None):
 
     group = parser.add_argument_group('Model estimation options', 'Required for "model" action')
     group.add_argument('-a', dest='annotations', metavar='<file>', help='annotation file')
+    group.add_argument('--legit', dest='legit', metavar='<int>,<int>,..', help='comma-separated list of classes considered legitimate')
+    group.add_argument('--malicious', dest='malicious', metavar='<int>,<int>,..', help='comma-separated list of classes considered malicious')
+    group.add_argument('--model', dest='model', metavar='<int>,<int>,..', help='comma-separated list of classes included in model')
+    group.add_argument('--sample', dest='sample', metavar='<pattern>', help='regex to filter sampleset by name')
+    group.add_argument('--computation', dest='computations', metavar='<step>,<step>,...',action='append', help='computation to evaluate')
     #group.add_argument()
 
     parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6)
