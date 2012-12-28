@@ -333,6 +333,29 @@ def get_models(opt, h5= None):
         m,((fit, binarize, classes), res) = evaluate(opt, computations, sampl, fit=fit, binarize=binarize,steps=steps,model=model,legit=legit,malicious=malicious)
         plot_roc(res,'ROC curves')
 
+        if opt.tex:
+            f = open(opt.tex,'a')
+            try:
+                f.write('\n')
+                f.write(r'''
+\begin{table}[h]
+    \begin{center}
+        \begin{tabular}{c|cc}
+            Method & \overline{\mu_{auc}} & \overline{\sigma_{auc}} \\ \hline
+
+%s
+
+        \end{tabular}
+    \end{center}
+    \caption{Mean and standard deviation of the area under ROC curve.}
+\end{table}
+''' % '\\\\ \hline\n'.join(('%s & %.3f & %.3f' % (name.replace('_','\_'),np.mean(auc),np.std(auc))) for name,auc,_ in res))
+                f.write('\n')
+            finally:
+                f.close()
+
+        return m,((fit, binarize, classes), res)
+
 if __name__=='__main__':
     from dataset import Table,H5Node
     from info import __graphics__

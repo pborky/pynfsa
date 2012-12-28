@@ -105,9 +105,10 @@ def opts(args=None):
     group.add_argument('--model', dest='model', metavar='<int>,<int>,..', help='comma-separated list of classes included in model')
     group.add_argument('--sample', dest='sample', metavar='<pattern>', help='regex to filter sampleset by name')
     group.add_argument('--computation', dest='computations', metavar='<step>,<step>,...',action='append', help='computation to evaluate')
+    group.add_argument('--tex', dest='tex', metavar='<file>', help='append tex-like tables into <file>')
     #group.add_argument()
 
-    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6)
+    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6,tex=False)
 
     #parser.print(_help())
     longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
