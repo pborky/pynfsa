@@ -1,6 +1,7 @@
 
 from __future__ import print_function
 from util import *
+import numpy as np
 
 class Labeler(object):
     def __init__(self,opt):
@@ -110,7 +111,7 @@ and text is any text used as annotation.''')
             match = fl[pred]
             if not len(match):
                 continue
-            if (match['annot']!=-1).any():
+            if np.any(match['annot']!=-1):
                 if not f['dstIPs'] or not f['dstPorts']:
                     print(colorize(None, boldred,red,boldyellow,red)*'## #warning#: #colliding filter# %s #is ignored#:'%f['annotation'],(match['annot']!=-1).sum())
                     match = match[match.annot==-1]
@@ -118,13 +119,13 @@ and text is any text used as annotation.''')
                     colliding = [annot[scalar(a)]['annotation'] for a in unique(match['annot']) if a in annot ]
                     print(colorize(None, boldred,red,boldyellow, boldyellow,red,)*'## #warning#: #filters# %s, %s #are not disjoint, you will probably loose some information#: '%(f['annotation'],', '.join(colliding)),(match['annot']!=-1).sum())
             fl[pred,'annot'] = f.get('idx')
-
+            print(colorize (None,green, boldblue,green, boldgreen) * '## #filtering# %d #flowids using filter# %s' % (len(match),f['annotation']) )
             if len(match) == 1:
                 flows[scalar(match['flow'].squeeze())] = f.get('idx')
             elif len(match) > 1:
                 flows.update( (i,f.get('idx')) for i in match['flow'].squeeze() )
         if 'annot' in h5grp:
-            print(colorize(None, boldyellow,yellow)*'## #warning#: #annotation dataset is going to be overwritten#')
+            print(colorize(None, boldred,red)*'## #warning#: #annotation dataset is going to be overwritten#')
             del h5grp['annot']
         fl[...,'flow','annot'].save(h5grp['annot/flowids'])
         annots = {}
