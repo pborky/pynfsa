@@ -1,5 +1,5 @@
 
-from .dataset import Table,Variable
+from .dataset import Table,Variable,H5Node
 from .extractor import PcapExtractor,FlowExtractor
 from .flowizer import Flowizer
 from .sampler import Sampler
@@ -8,5 +8,4 @@ from .labeling import Labeler
 import models
 import util
 import functional
-#from .main import main
 

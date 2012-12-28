@@ -38,7 +38,7 @@ class colorize(object):
             def _apply_color(self,s):
                 try:
                     color = self.iter.next()
-                    return str(color(s)) if callable(color) else s
+                    return unicode(color(s)) if callable(color) else s
                 except StopIteration:
                     return s
             def __call__(self, matcher):
@@ -49,6 +49,85 @@ class colorize(object):
 
     def __mul__(self, s):
         return self.fml.sub(self._rainbow(),s)
+
+
+def opts(args=None):
+    """ User interface features
+    """
+    from argparse import ArgumentParser
+    from sys import argv
+    from info import __description__,__version__,__prog__,__date__,__author__
+
+    if not args: args = argv[1:]
+
+    actions = ('raw','flow','sample','model','filter', 'load', 'annotate')
+    flowids  = ('3','4')
+    transforms  = ('csd','psd')
+    filetypes  = ('pcap','netflow')
+
+    parser = ArgumentParser(description=__description__)
+
+
+    parser.add_argument('--version', action='version', version='%s v%s\nCopyright (C) %s %s'%(__prog__,__version__,__date__.split('-',1)[0],__author__), help= 'show version information')
+
+    parser.add_argument('action',choices=actions, metavar='(%s)'%('|'.join(actions)), help= ''\
+                                                                                            'action to execute; raw stores "pcap" or netflow data in h5 database, "flow" marks flows and extracts attributes, '\
+                                                                                            '"sample" computes sampling at given sample rate and tranformations at given windowing, "model" fits '\
+                                                                                            'model to data stored in database, filter converts XML Ip filters to JSON format and "load" loads'\
+                                                                                            ' database into memory')
+    parser.add_argument('database', metavar='<database file>', help='hdf5 array database')
+    parser.add_argument('file', nargs='*', metavar='<input file>', help='input files to process')
+
+    parser.add_argument('-f', dest='in_format',choices=filetypes, metavar='(%s)'%('|'.join(filetypes)), help='input file format')
+    parser.add_argument('-o', dest='out_file', metavar='<output file>', help='output file')
+    parser.add_argument('-m', dest='min_packets', metavar='<min packets>', type=int, help='min packets per flow')
+    parser.add_argument('-n', dest='reverse_dns', action='store_false', help='don`t do reverse dns')
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-v', '--verbose', dest='verbosity', action='count', help='increase verbosity')
+    group.add_argument('-q', '--quiet', dest='verbose', action='store_false', help='do not dump to terminal')
+
+    group= parser.add_argument_group('Flow extraction options', 'Required for "flow", "sample" and "model" actions')
+    group.add_argument('-i', dest='flowid',choices=flowids, metavar='(%s)'%('|'.join(flowids)), help='flow identification (3-tuple or 4-tuple)')
+    group.add_argument('-u', dest='usesyns', action='store_true', help='don`t use SYN packets to distinguish flow start')
+    group.add_argument('-p', dest='protocol', metavar='<protocol>', type=int, help='protocol to take in account, default = 6 (TCP)')
+
+    group = parser.add_argument_group('Sampling options', 'Required for "sample" and "model" actions')
+    group.add_argument('-s', dest='srate', metavar='<sample rate>',action='append',type=float,help='sample rate to use, can be specified multiple times')
+    group.add_argument('-w', dest='window', metavar='<window length>',action='append',type=int,help='window lengths to use, can be specified multiple times')
+    group.add_argument('-t', dest='transform', metavar='(%s)'%('|'.join(transforms)), choices=transforms,help=''\
+                                                                                                              'tranformation to use, can be: "csd" for cross spectral density or "psd" for power spectral density')
+
+    group = parser.add_argument_group('Model estimation options', 'Required for "model" action')
+    group.add_argument('-a', dest='annotations', metavar='<file>', help='annotation file')
+    #group.add_argument()
+
+    parser.set_defaults(verbose=True,verbosity=0,reverse_dns=True,usesyns=True,protocol=6)
+
+    #parser.print(_help())
+    longopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if k.startswith('--'))
+    shortopts =  dict((v.dest,k) for k,v in  parser._option_string_actions.iteritems() if not k.startswith('--'))
+    opt =  parser.parse_args(args)
+
+    if opt.action in ('raw','flow') and not opt.in_format:
+        parser.error('input file format (--input-format) not specified for "raw" or "flow" action')
+
+    if opt.action in ('flow', 'sample') and not opt.flowid:
+        parser.error('flow identification (--flowid) not specified for "flow" or "sample" action')
+
+    if opt.action in ('sample') and not opt.srate:
+        parser.error('sample rate (--srate) not specified for "sample" action')
+
+    if opt.action in ('sample') and not opt.window:
+        parser.error('window (--window) not specified for "sample" action')
+
+    if opt.action in ('sample') and not opt.transform:
+        parser.error('transform (--transform) not specified for "sample" action')
+
+    return opt, longopts, shortopts
+
+
+
 
 def is_iterable(val):
     from collections import Iterable
@@ -416,6 +495,8 @@ def scalar(x):
             from numpy import squeeze
             return squeeze(x).item()
         except ValueError:
+            pass
+        except IndexError:
             pass
     return x
 
