@@ -148,16 +148,7 @@ def get_flow(opt, h5 = None):
     if not h5 :
         h5 = H5Node(opt,'a')
 
-    if opt.flowid == '3':
-        fflow=('src','dst','dport')
-        bflow=('dst','src','sport')
-        flowid = 'flows3'
-    elif opt.flowid == '4':
-        fflow=('src', 'sport','dst','dport')
-        bflow=('dst', 'dport','src','sport')
-        flowid = 'flows4'
-    else:
-        raise NotImplementedError('flowid')
+    fflow, bflow, flowid = flowiddataset(opt)
 
     if opt.in_format == 'pcap':
         fields = ('time', 'paylen', 'flow')
@@ -197,12 +188,7 @@ def get_samples(opt, h5= None):
     from itertools import product
     from operator import add
 
-    if opt.flowid == '3':
-        flowid = 'flows3'
-    elif opt.flowid == '4':
-        flowid = 'flows4'
-    else:
-        raise NotImplementedError('flowid')
+    _, _, flowid = flowiddataset(opt)
 
     sampler = Sampler(opt)
 
@@ -242,6 +228,7 @@ def get_models(opt, h5= None):
     from sklearn.preprocessing import Scaler
     from sklearn.decomposition import PCA
     from sklearn.mixture import GMM,DPGMM
+    from sklearn.manifold import LocallyLinearEmbedding,Isomap
     from labeling import Labeler
     import re
 
@@ -286,9 +273,9 @@ def get_models(opt, h5= None):
         'Threshold': fapply( FreqThresh, 0 ),
         'MomentumMVKS': fapply( Momentum, 'mvks'),
         'GMM' : fapply( GMM, 1, 5, covariance_type='diag', n_iter=40 ),
-        'DPGMM' : fapply( DPGMM, 1, 5, covariance_type='diag', n_iter=40 ),
+        'DPGMM' : fapply( DPGMM, covariance_type='diag', n_iter=40 ),
         'Mahal': fapply( Mahalanobis, False ),
-        'PCA': fapply( PCA, 3, 10 ),
+        'PCA': fapply( PCA, 0.99 ),
         'PCAw': fapply( PCA, 3, 10 , whiten=True )
     }
     computations = [
@@ -322,15 +309,13 @@ def get_models(opt, h5= None):
         fit, binarize = None, None
         #sampl, = [ h5[s] for s in ('/samples/data_psd_0.003300_200_simulated/', '/samples/data_psd_100.000000_200_simulated/') if s in h5 ]
 
-        intornone = lambda x: int(x) if x.isdigit() else None
+        splitToInts = lambda x: [ int(i) for i in (m.strip() for m in x.split(',') if isString(m)) if i.isdigit() ]
 
-        model= filter(None,map(intornone,(m.strip() for m in opt.model.split(',')))) if opt.model else None  #[33, 34, 67, 82, 85]   #http
-        legit= filter(None,map(intornone,(m.strip() for m in opt.legit.split(',')))) if opt.legit else None  #[33, 34, 67, 82, 85]
-        malicious= filter(None,map(intornone,(m.strip() for m in opt.malicious.split(',')))) if opt.malicious else None  #[80]              # woodfucker
-        if opt.computations:
-            computations = [tuple(m.strip() for m in comp.split(',')) for comp in opt.computations]
+        model = splitToInts(opt.model) if opt.model is not None else None
+        legit = splitToInts(opt.legit) if opt.legit is not None else None
+        malicious = splitToInts(opt.malicious) if opt.malicious is not None else None
 
-        m,((fit, binarize, classes), res) = evaluate(opt, computations, sampl, fit=fit, binarize=binarize,steps=steps,model=model,legit=legit,malicious=malicious)
+        m,((fit, binarize, classes), res) = evaluate(opt, computations, sampl,steps=steps,model=model,legit=legit,malicious=malicious)
         plot_roc(res,'ROC curves')
 
         if opt.tex:

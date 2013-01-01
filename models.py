@@ -6,7 +6,7 @@ import numpy as np
 import scipy.stats as st
 from functional import *
 
-def evaluate(opt, computations, h5grp, fit=None, binarize=None, model=None, legit=None, malicious=None, model_legit=None,steps=None):
+def evaluate(opt, computations, h5grp, model=None, legit=None, malicious=None, model_legit=None,steps=None):
     m = Modeler(opt,computations,steps=steps)
     if 'annot' not in h5grp:
         raise Exception('expecting annotated dataset')
@@ -17,7 +17,7 @@ def plot_roc(res, title=''):
     from matplotlib.pylab import plt
     from math import ceil
     from functional import add
-    colors = [ 'r-','g-', 'b-', 'c-', 'm-', 'rx-','gx-', 'bx-', 'cx-', 'mx-', 'rx-','go-', 'bo-', 'co-', 'm-', 'g.', 'b.', 'c.', 'm.'   ]
+    colors = [ 'r-','g-', 'b-', 'c-', 'm-', 'rx-','gx-', 'bx-', 'cx-', 'mx-', 'ro-','go-', 'bo-', 'co-', 'mo-', 'r.', 'g.', 'b.', 'c.', 'm.'   ]
     colors*=int(1+ceil(20 / len(colors) ))
     idx = list( np.argsort([np.mean(auc) for _, auc, _ in res]) )
     values = reduce(add,( [fpr,tpr,colors.pop(0)] for fpr, tpr, thr in (d[0] for _, _, d in (res[i] for i in reversed(idx))) ),[])
@@ -26,6 +26,7 @@ def plot_roc(res, title=''):
     ax1 = plt.subplot2grid((5,1), (1, 0), rowspan=4)
     ax2 = plt.subplot2grid((5,1), (0, 0),frameon=False,xticks=[],yticks=[])
     ln = ax1.plot( *values )
+    ax1.fill_between( [0,1],[0,0],[0,1],facecolor='red',alpha=0.15 )
     ax1.set_xlabel('false positive rate')
     ax1.set_ylabel('true positive rate')
     ax2.legend(ln, names, loc=10, ncol = 1, mode='expand', prop={'size': 10})
@@ -33,9 +34,15 @@ def plot_roc(res, title=''):
 
 
 def fapply(fnc, *args, **kwargs):
+    """Function application over list of arguments.
+    Applies function to each positional argument and returns list of result.
+    If the particular arguemtn is iterable, it is ufloded before in invocation.
+    Keyword arguments are passed in all invocations.
+
+    """
     kwstr = ['%s=%s'%i for i in  kwargs.iteritems()]
     fkey = lambda fnc: '%s' % fnc.__name__
-    fargs = lambda arg: arg if is_iterable(arg) and not isinstance(arg,str) else (arg,)
+    fargs = lambda arg: arg if isListLike(arg) else (arg,)
     fstring = lambda fnc,arg: '%s(%s)' %(fkey(fnc), ','.join([str(s) for s in fargs(arg)]+list(kwstr)))
     if len(args):
         return [ (fkey(fnc), fstring(fnc,a), fnc(*fargs(a))) for a in args ]
@@ -43,17 +50,33 @@ def fapply(fnc, *args, **kwargs):
         return  (fkey(fnc), fstring(fnc,()) ,fnc()),
 
 def fiterate( *args):
+    """Generate pipeline compising all of the arguments. Particular arguments ought to be iterable
+    and Cartesian product of them is computed. Each value in iterables must comform to Pipeline specs.
+
+    """
     from itertools import product
     return [ (','.join(name for key,name,fnc in cmds), PipelineFixd([(key,fnc) for key,name,fnc in cmds])) for cmds in product(*args) ]
 
 class Modeler(object):
+    """Constructs Modeler callable object used to compute and evaluate several models.
+
+    Parameters
+    ----------
+    opt : argparse.Namespace
+        Arguements passed in command line.
+    computations : iterable
+        Each item defines an computation. Computation is defined by list of keys to steps argument.
+    steps : dictionary
+        Step of the computation. Steps are iterables that can be variants of same method.
+
+    """
     def __init__(self,opt, computations=None, steps=None):
         self.opt = opt
-        from sklearn.mixture import GMM as GMM,DPGMM
+        from sklearn.mixture import GMM,DPGMM
         from sklearn.decomposition import PCA
         from sklearn.preprocessing import Scaler
 
-        self.steps = {
+        self.steps = steps if steps is not None else {
             'Scaler': fapply( Scaler ),
             'Bands': fapply( FreqBands, 2,5,10 ),
             'BandsLg': fapply( FreqBands, 2,5,10, log_scale=True ),
@@ -65,7 +88,7 @@ class Modeler(object):
             'PCA': fapply( PCA, 3, 10 ),
             'PCAw': fapply( PCA, 3, 10 , whiten=True )
         }
-        if computations is None: computations = [
+        computations = opt.computations if opt.computations else [
             ('Bands','GMM'),
             ('Bands','Mahal'),
             ('Threshold','Mahal'),
@@ -74,10 +97,10 @@ class Modeler(object):
             ('Threshold','PCA', 'Scaler', 'Mahal' ),
             ('Threshold','PCA', 'Scaler', 'GMM' )
         ]
-        self.methods = self._methods(computations,steps=steps)
+        computations = [(tuple(m.strip() for m in comp.split(',')) if isinstance(comp,str) else comp) for comp in computations]
+        self.methods = self._methods(computations)
 
-    def _methods(self,computations,steps=None):
-        if steps is None: steps = self.steps
+    def _methods(self,computations):
         return dict( reduce(add, ( fiterate(*[ self.steps[m] for m in c if m in self.steps])  for c in computations ) ) )
 
 
@@ -127,14 +150,14 @@ class Modeler(object):
               (str(model), str(legit), str(malicious), ))
 
         classes = {}
-        if model_legit:
-            classes.update((i,1) for i in legit if i not in model)
-            classes.update((i,-1) for i in malicious if i not in model)
-            classes.update((i,1) for i in model)
-        else:
+        if model_legit:    # 2 - positive (alarm) 1 - negative
             classes.update((i,-1) for i in legit if i not in model)
             classes.update((i,1) for i in malicious if i not in model)
-            classes.update((i,1) for i in model)
+            classes.update((i,-1) for i in model)
+        else:              # 1 - positive (alarm) -1 - negative
+            classes.update((i,1) for i in legit if i not in model)
+            classes.update((i,2) for i in malicious if i not in model)
+            classes.update((i,2) for i in model)
 
         binarize = np.vectorize(lambda x: classes[x] if x in classes else 0)
 
@@ -143,7 +166,8 @@ class Modeler(object):
         from sklearn.metrics import roc_curve,auc
         idx = ybin != 0
         ybin = ybin[idx]
-        score_raw = score_raw[idx]
+        model_legit = np.unique(ybin)[0]
+        score_raw = model_legit * score_raw[idx]
         fpr, tpr, thresholds = roc_curve(ybin, score_raw)
         return auc(fpr, tpr), (fpr, tpr,thresholds)
 
@@ -164,10 +188,11 @@ class Modeler(object):
         y_cnt = np.bincount(y_sorted)
         y_wrong = y_uni[y_cnt<=folds]
 
-        print(colorize(cyan, boldcyan) * '#evaluating# %s:' % (name, ))
+        print(colorize(cyan, boldblue) * '#evaluating# %s:' % (name, ))
 
         if len(y_wrong):
             if np.any(fit[...,np.newaxis] == y_wrong):
+                #fit = fit[np.any(fit[...,np.newaxis] == y_wrong,0).squeeze()]
                 raise Exception('The fitted class has less than %d members, which is too few. %s' % (folds,str(y_wrong)))
             print(colorize(None,boldred,red)*'## #warning#: #%d classes has less than %d members, discaring them#'%(len(y_wrong),folds))
             idx = np.all(y[np.newaxis,...] != y_wrong[...,np.newaxis],0)
@@ -190,8 +215,8 @@ class Modeler(object):
         poscnt = np.sum(ybin==ybincls[1])
 
 
-        print(colorize(boldyellow, boldblue, boldgreen, boldred) *
-              '\t#using# #%d samples for model#, #%d positive# and #%d negative# samples for validation ' %
+        print(colorize(boldyellow, cyan, boldred, green) *
+              '\t#using# #%d samples for model#, #%d positive (malicious)# and #%d negative (legitimate)# samples for validation ' %
               (modelcnt, poscnt, negcnt))
 
         #unknown = y==-1
@@ -264,15 +289,15 @@ class NotImplementedYet(Exception):
 
 
 class LinearTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, A):
-        """ Projection to nex space determined by projection matrix.
+    """Projection to nex space determined by projection matrix.
 
-            Parameters
-            ----------
-            A : array-like, shape [n_orig_features,n_new_features]
-                the transformation is denoted as dot prodct: Y = XA.
-                if A is an callable, the matrix determined during fit
-        """
+    Parameters
+    ----------
+    A : array-like, shape [n_orig_features,n_new_features] or callable
+        The transformation is denoted as dot prodct: Y = XA.
+        If parameter A is callable, the matrix determined during fit.
+    """
+    def __init__(self, A):
         if callable(A):
             self.getA = A
             self.A = None
@@ -283,18 +308,20 @@ class LinearTransformer(BaseEstimator, TransformerMixin):
             self.A = A
     def fit(self, X, y=None, **params):
         """If cellable has been provided instead of matrix A it is invoked
-            on **params dictionaty to determine A in formula: Y = XA.
+        on **params dictionaty to determine A in formula: Y = XA.
 
-            Parameters
-            ----------
-                X : used to determine matrix A invocation
-                y : dummy, not used to fit the model.
-                params : used to determine matrix A invokation
+        Parameters
+        ----------
+        X : array-like, shape [n_samples, n_features]
+            Original feature set.
+        y : array-like, shape [ n_samples, 1]
+            Class information. Not used in linear transform.
+        params : additional parameters, implemented in subclasses
 
-            Returns
-            -------
-            self : object
-                Returns self.
+        Returns
+        -------
+        self : object
+            Returns self.
         """
         if callable(self.getA):
             self.A = self.getA(X,**params)
@@ -304,13 +331,17 @@ class LinearTransformer(BaseEstimator, TransformerMixin):
     def transform(self, X, y=None):
         """Perform linear transformation : Y = XA
 
-            Parameters
-            ----------
-            X : array-like, shape [n_samples, n_features]
+        Parameters
+        ----------
+        X : array-like, shape [n_samples, n_features]
+            Original feature set.
+        y : array-like, shape [ n_samples, 1]
+            Class information. Not used in linear transform.
 
-            Returns
-            -------
-            array-like X transformed
+        Returns
+        -------
+        X_transformed : array-like [n_samples, n_new_features]
+            Transformed feature space.
         """
         from sklearn.utils.validation import warn_if_not_float
         return np.dot(X,self.A)
@@ -336,20 +367,20 @@ class FreqBaseTransformer(LinearTransformer):
         raise NotImplementedYet()
 
 class FreqThresh(FreqBaseTransformer):
+    """Creates projection based on frequency thresholds.
+    The frequency components that are greater then threshold
+    are retained, others are discarded. If optional upper
+    thredhold is provided it is applied in conjuction with
+    lower threshold.
+
+
+    Parameters
+    ----------
+    f_thresh : number , lower threshold
+    f_thresh_hi : number , upper threshold
+
+    """
     def __init__(self,f_thresh, f_thresh_hi=None):
-        """Creates projection based on frequency thresholds.
-            The frequency components that are greater then threshold
-            are retained, others are discarded. If optional upper
-            thredhold is provided it is applied in conjuction with
-            lower threshold.
-
-
-            Parameters
-            ----------
-            f_thresh : number , lower threshold
-            f_thresh_hi : number , upper threshold
-
-        """
         super(FreqThresh, self).__init__()
         self.f_thresh = f_thresh
         self.f_thresh_hi = f_thresh_hi
@@ -366,18 +397,18 @@ class FreqThresh(FreqBaseTransformer):
         return A
 
 class FreqBands(FreqBaseTransformer):
+    """Creates projection based on frequency band filtering.
+    The frequency spectrum is divided into equal or logatitmic intervals
+    in which are spectral components summed.
+
+    Parameters
+    ----------
+    n_bands : number of bands
+    log_scale : boolean, if true logarithic scale instead of linear is used,
+                default: False
+
+    """
     def __init__(self,n_bands, log_scale = False, mean=False):
-        """Creates projection based on frequency band filtering.
-            The frequency spectrum is divided into equal or logatitmic intervals
-            in which are spectral components summed.
-
-            Parameters
-            ----------
-            n_bands : number of bands
-            log_scale : boolean, if true logarithic scale instead of linear is used,
-                        default: False
-
-        """
         super(FreqBands, self).__init__()
         self.n_bands = n_bands
         self.log_scale = log_scale
@@ -399,25 +430,21 @@ class FreqBands(FreqBaseTransformer):
         return A
 
 class Momentum(BaseEstimator, TransformerMixin):
+    """ Computation of the moments of an data instance result in
+    features in new feature space where each dimension is dedicated
+    to particular moment.
+
+    Parameters
+    ----------
+    moments : string where characters denote moment estimator:
+            'm' - mean
+            'v' - variance
+            'k' - kurtosis
+            's' - skewness
+            ordering determines the ordering of the computations
+    """
     _moments_map = {'m':np.mean, 'v':np.var , 'k': st.kurtosis, 's': st.skew }
     def __init__(self, moments = 'mvks'):
-        """ Computation of the moments of an data instance result in
-            features in new feature space where each dimension is dedicated
-            to particular moment.
-
-            Parameters
-            ----------
-            moments : string where characters denote moment estimator:
-                    'm' - mean
-                    'v' - variance
-                    'k' - kurtosis
-                    's' - skewness
-                    ordering determines the ordering of the computations
-            Returns
-            -------
-            self : object
-                Returns self.
-        """
         if not all(k in self._moments_map for k in moments):
             raise ValueError('Unexpected value: %s'%moments)
         self.moment_fnc = [self._moments_map[k] for k in moments ]
@@ -429,31 +456,31 @@ class Momentum(BaseEstimator, TransformerMixin):
     def transform(self, X, y=None):
         """Perform calculation of the moments over features.
 
-            Parameters
-            ----------
-            X : array-like, shape [n_samples, n_features]
+        Parameters
+        ----------
+        X : array-like, shape [n_samples, n_features]
 
-            Returns
-            -------
-            array-like ith shape [n_samples, n_moments] whith
-                moments of the original features. Ordering of
-                the moments is according to argument `moments`
-                given in initialization of the object
+        Returns
+        -------
+        moments : array-like ith shape [n_samples, n_moments]
+            Moments of the original features. Ordering of
+            the moments is according to argument `moments`
+            given in initialization of the object
         """
         from sklearn.utils.validation import warn_if_not_float
         return np.hstack(tuple(m(X,axis=1)[...,np.newaxis] for m in self.moment_fnc))
 
 class Mahalanobis (BaseEstimator):
-    def __init__(self, robust=False):
-        """Mahalanobis distance estimator. Uses Covariance estimate
-            to compute mahalanobis distance of the observations
-            from the model.
+    """Mahalanobis distance estimator. Uses Covariance estimate
+    to compute mahalanobis distance of the observations
+    from the model.
 
-            Parameters
-            ----------
-            robust : boolean to determine wheter to use robust estimator
-                based on Minimum Covariance Determinant computation
-        """
+    Parameters
+    ----------
+    robust : boolean to determine wheter to use robust estimator
+        based on Minimum Covariance Determinant computation
+    """
+    def __init__(self, robust=False):
         if not robust:
             from sklearn.covariance import EmpiricalCovariance as CovarianceEstimator #
         else:
@@ -462,40 +489,40 @@ class Mahalanobis (BaseEstimator):
         self.cov = None
     def fit(self, X, y=None, **params):
         """Fits the covariance model according to the given training
-            data and parameters.
+        data and parameters.
 
-            Parameters
-            ----------
-            X : array-like, shape = [n_samples, n_features]
-                Training data, where n_samples is the number of samples and
-                n_features is the number of features.
+        Parameters
+        ----------
+        X : array-like, shape = [n_samples, n_features]
+            Training data, where n_samples is the number of samples and
+            n_features is the number of features.
 
-            Returns
-            -------
-            self : object
-                Returns self.
+        Returns
+        -------
+        self : object
+            Returns self.
         """
         self.cov = self.model.fit(X)
         return self
     def score(self, X, y=None):
         """Computes the mahalanobis distances of given observations.
 
-            The provided observations are assumed to be centered. One may want to
-            center them using a location estimate first.
+        The provided observations are assumed to be centered. One may want to
+        center them using a location estimate first.
 
-            Parameters
-            ----------
-            X: array-like, shape = [n_samples, n_features]
-              The observations, the Mahalanobis distances of the which we compute.
+        Parameters
+        ----------
+        X : array-like, shape = [n_samples, n_features]
+          The observations, the Mahalanobis distances of the which we compute.
 
-            Returns
-            -------
-            mahalanobis_distance: array, shape = [n_observations,]
-                Mahalanobis distances of the observations.
+        Returns
+        -------
+        mahalanobis_distance : array, shape = [n_observations,]
+            Mahalanobis distances of the observations.
         """
 
         #return self.model.score(X,assume_centered=True)
-        return self.model.mahalanobis(X-self.model.location_) ** 0.33
+        return - self.model.mahalanobis(X-self.model.location_) ** 0.33
 
 from sklearn.pipeline import Pipeline
 
@@ -591,10 +618,9 @@ class freq_sdev(base):
         return np.std(X, axis=1), y, None
 class freq_momentum(base):
     def __init__(self, moment, **kwargs):
-        from collections import Iterable
         from scipy.stats import skew,kurtosis
         import numpy as np
-        if not isinstance(moment, Iterable):
+        if not isSequenceType(moment):
             moment=tuple(int(i) for i in reversed(bin(moment)[2:]))
         else:
             moment = tuple(moment)

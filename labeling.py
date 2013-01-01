@@ -112,12 +112,12 @@ and text is any text used as annotation.''')
             if not len(match):
                 continue
             if np.any(match['annot']!=-1):
-                if not f['dstIPs'] or not f['dstPorts']:
-                    print(colorize(None, boldred,red,boldyellow,red)*'## #warning#: #colliding filter# %s #is ignored#:'%f['annotation'],(match['annot']!=-1).sum())
+                colliding = [annot[scalar(a)]['annotation'] for a in unique(match['annot']) if a in annot ]
+                if 'dstIPs' not in f or 'dstPorts' not in f or not f['dstIPs'] or not f['dstPorts']:
+                    print(colorize(None, boldred,red,boldyellow, yellow,red)*'## #warning#: #colliding filter# %s, %s #is ignored#: %d'%(f['annotation'],', '.join(colliding),(match['annot']!=-1).sum()))
                     match = match[match.annot==-1]
                 else:
-                    colliding = [annot[scalar(a)]['annotation'] for a in unique(match['annot']) if a in annot ]
-                    print(colorize(None, boldred,red,boldyellow, boldyellow,red,)*'## #warning#: #filters# %s, %s #are not disjoint, you will probably loose some information#: '%(f['annotation'],', '.join(colliding)),(match['annot']!=-1).sum())
+                    print(colorize(None, boldred,red,boldyellow, yellow,red,)*'## #warning#: #filters# %s, %s #are not disjoint, you will probably loose some information#: '%(f['annotation'],', '.join(colliding)),(match['annot']!=-1).sum())
             fl[pred,'annot'] = f.get('idx')
             print(colorize (None,green, boldblue,green, boldgreen) * '## #filtering# %d #flowids using filter# %s' % (len(match),f['annotation']) )
             if len(match) == 1:

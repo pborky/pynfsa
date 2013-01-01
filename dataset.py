@@ -103,7 +103,7 @@ class H5Node(object):
             return self._get_item(item)
     def __setitem__(self, key, value):
         path,name = self._get_absolute_path(key)
-        if not is_iterable(value):
+        if not isSequenceType(value):
             value = value,
         self.h5.createArray(path,name,value, createparents=True)
     def close(self):

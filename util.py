@@ -50,6 +50,24 @@ class colorize(object):
     def __mul__(self, s):
         return self.fml.sub(self._rainbow(),s)
 
+def flowiddataset(opt):
+
+    if opt.flowid == '2a':
+        fflow=('src','dport')
+        bflow=('dst','sport')
+        flowid = 'flows2a'
+    elif opt.flowid == '3':
+        fflow=('src','dst','dport')
+        bflow=('dst','src','sport')
+        flowid = 'flows3'
+    elif opt.flowid == '4':
+        fflow=('src', 'sport','dst','dport')
+        bflow=('dst', 'dport','src','sport')
+        flowid = 'flows4'
+    else:
+        raise NotImplementedError('flowid')
+    return  fflow, bflow, flowid
+
 
 def opts(args=None):
     """ User interface features
@@ -61,7 +79,7 @@ def opts(args=None):
     if not args: args = argv[1:]
 
     actions = ('raw','flow','sample','model','filter', 'load', 'annotate')
-    flowids  = ('3','4')
+    flowids  = ('2a', '3','4')
     transforms  = ('csd','psd')
     filetypes  = ('pcap','netflow')
 
@@ -135,9 +153,11 @@ def opts(args=None):
 
 
 
-def is_iterable(val):
-    from collections import Iterable
-    return isinstance(val,Iterable)
+def isString(val):
+    return isinstance(val,str)
+
+def isListLike(val):
+    return not isString(val) and isSequenceType(val)
 
 def ip2int(ip):
     """convert string IPv4 address to int"""
