@@ -308,18 +308,28 @@ def get_packets(fn,extractor):
 
 def fig(plt_fnc, name=None, show=True):
     """fig( plt_fnc, [name=None, show=False] ) -> figure,result
-        It is convience function for matplotlib figures.
-        Creates an figure and axes and executes plot function(s) (plt_fnc) on axes.
-        count of axes is same as number of plot function(s). If name is is given it must be
-        list-like object of same size as plt_fnc then each axes is named accordingly.
-        If show is true figure is showed.
-        Input:
-              plt_fnc - callable or list of callables that receive argument ax, which axes.
-              name - string or list of names, must be same shape as plt_fnc
-              show - show an figure if true
-        Returns:
-              figure - figure object (can be used to show figure is show=False)
-              result - result of plt_fnc invocation(s)
+    It is convience function for matplotlib figures.
+    Creates an figure and axes and executes plot function(s) (plt_fnc) on axes.
+    count of axes is same as number of plot function(s). If name is is given it must be
+    list-like object of same size as plt_fnc then each axes is named accordingly.
+    If show is true figure is showed.
+
+    Parameters
+    ----------
+    plt_fnc : callable
+        callable or list of callables that receive argument ax, which axes.
+    name :  string or sequence of string
+        names, must be same shape as plt_fnc
+    show : boolean
+        show an figure
+
+    Returns
+    -------
+    figure : figure object
+        can be used to show figure is show=False
+    result : -
+        result of plt_fnc invocation(s)
+
     """
     from matplotlib.pyplot import figure
     import numpy as np
