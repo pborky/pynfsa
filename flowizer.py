@@ -1,4 +1,6 @@
+"""Contains flowizer object
 
+"""
 
 from util import *
 
@@ -7,7 +9,21 @@ tmpl_progress = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: %
 tmpl_progress2 = colorize(boldyellow,boldred,boldblue) * '\rprogress: progress: #100# %% (dropped: %d of %d)\n'
 
 class Flowizer(object):
-    """ Annotates records based on requirements.
+    """Creates an callable that is used to generate flow data.
+
+    Parameters
+    ----------
+    fialds : tuple
+        tuple of field names (a columns of dataset
+    fflow : tuple
+        tuple determinid the flow schema (forward packets)
+    bflow : tuple
+        tuple determinid the flow schema (backward packets)
+    usesyns : boolean
+        use syns to determine flow direction
+    opt : argparse.Namespace
+        Arguements passed in command line.
+
     """
     def __init__(self, fields = ('time', 'paylen', 'flow'), fflow=('src','sport','dst','dport'), bflow=('dst','dport','src','sport'), usesyns = True, opt=None):
         self.fields = fields
@@ -17,6 +33,17 @@ class Flowizer(object):
         self.protocol = opt.protocol if opt else True
         self.usesyns = opt.usesyns if opt else usesyns
     def __call__(self, data, flowids=None):
+        """flowize and data
+
+        Parameters
+        ----------
+        data : dataset.Table
+            a table
+
+        flowids : dataset.Table
+            thread the flowids troughout the subsequent calls
+
+        """
         from numpy import array,abs,vstack,squeeze
         from dataset import Table
         from sys import stdout

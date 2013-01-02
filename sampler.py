@@ -1,4 +1,6 @@
+"""Contains objects related to sampling process.
 
+"""
 from util import *
 
 
@@ -77,7 +79,13 @@ def psd2(w, bounds):
     return amp,np.abs(fft(correlate(amp,amp,mode='same')))
 
 class Sampler(object):
-    """ Generates samples of the packet traces
+    """Constructs Sampler callable which generates samples.
+
+    Parameters
+    ----------
+    opt : argparse.Namespace
+        Arguements passed in command line.
+
     """
     def __init__(self, opt):
         self.opt = opt
@@ -91,6 +99,18 @@ class Sampler(object):
             raise NotImplementedError('transform')
 
     def __call__(self, h5grp, flowdata, flowids):
+        """Generates sample from flow matrix 'flowdata' and 'flowids' and stores it in 'h5grp'.
+
+        Parameters
+        ----------
+        h5grp : pynfsa.dataset.H5Node
+            Dataset where to store an sample
+        flowdata : pynfsa.dataset.Table
+            flow matrix
+        flowids : dataset.Table
+            flow identifiers
+
+        """
         from itertools import product
         from sys import stdout
         from scipy.fftpack import fftfreq

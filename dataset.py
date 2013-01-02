@@ -1,8 +1,25 @@
+"""Classes encapsulating HDF5 files and numpy matrices.
 
+"""
 
 from util import *
 
 class H5Node(object):
+    """Creates group in H5 file.
+    Opens h5 file if not provided in argument 'h5'.
+
+    Parameters
+    ----------
+    opt : argparse.Namespace
+        Arguements passed in command line.
+    h5 : tables.File
+        An instance of H5 file
+    grp : tables.Group
+        An instance of H5 group
+    auto_create_grps : boolean
+        if True ne group is created if it is non-existent
+
+    """
     def __init__(self, opt, h5 = None, grp = None, auto_create_grps = True ):
         from tables import openFile,File
         if isinstance(h5,File):
@@ -109,6 +126,9 @@ class H5Node(object):
     def close(self):
         self.h5.close()
     def handle_exit(self, try_fnc, *arg,**kwarg):
+        """Call 'try_fnc(opt,h5=h5)' in try-finally block. At the end close the file and exit.
+
+        """
         if not callable(try_fnc):
             raise ValueError()
         try:
@@ -137,6 +157,20 @@ class H5Node(object):
                 print '%s`%s [%s]' % (padding, cyan(key), val )
 
     def printTree(self, padding= '', last=False,maxdepth=3,maxcount=50):
+        """Print tree contained in file.
+
+        Parameters
+        ----------
+        padding : string
+            Arguements passed in command line.
+        last : boolean
+            Last node in sequence
+        maxdepth : number
+            Limit dept
+        maxcount : number
+            Limit count
+
+        """
 
         if maxdepth is not None and maxdepth<0:
             print padding[:-1] + ' `'+bold(blue('...'))
@@ -165,14 +199,18 @@ class H5Node(object):
                 self._printNode(key,val,padding=padding+' |',last=not count,maxdepth=maxdepth-1,maxcount=maxcount)
 
 class Table(object):
-    """Encapsulation of the numpy array, in order to conviently select/update data.
+    """Encapsulation of the numpy array, in order to conviently select/update data
+    .
+    Parameters
+    ----------
+    data : array-like [n_rows, len(fields)]
+        the data representing this table
+    fields : tuple
+        tuple of strings representing columns
+    h5 : dataset.H5Node
+        Initialize Table from HDF5 file
     """
     def __init__(self, data=None, fields=None, h5=None):
-        """constructor
-            Input:
-                data - numpy matrix or list of lists
-                fields - list of column names
-        """
         from numpy import array,ndarray
         if h5 is not None:
             self.h5 = h5
@@ -276,18 +314,27 @@ class Table(object):
         return self.data.squeeze()
     def select(self, predicate, order=None, retdset=None, fields=None, **kwargs):
         """Select submatrix based on predicate and fields.
-            Input:
-                predicate - An subclass of Predicate. It generates boolean vector to be used as indexig vector.
-                order - field to be used for ordering of the resultset
-                group - not implemented
-                retdset - if true reslt is encapsulated in new Dataset instance
-                fields - a tuple specifying fields to keep
-            Output:
-                a submatrix of new Dataset object based on predicate
-            Example:
-                size = PredicateFactory('size')
-                r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
-                # select submatrix containing time and size columns and rows where size is in interval [10,15)
+
+        Example:
+            size = PredicateFactory('size')
+            r = data.select((size >= 10) & (size < 15), fields = ('time', 'size'))
+            # select submatrix containing time and size columns and rows where size is in interval [10,15)
+
+        Parameters
+        ----------
+        predicate : dataset.Predicate
+            Vector predicate to use for an indexing.
+        order : string
+            Determine field to be used for ordering of the result.
+        retdset : boolean
+            If true result is wrapped in new dataset.Table instance.
+        fields : tuple
+            Fields to retain in result.
+
+
+        Returns
+        -------
+            a submatrix or a new Table object based on predicate
         """
         from numpy import argsort,ndarray
 
@@ -333,6 +380,15 @@ class Table(object):
         return idx.shape[0] if isinstance(idx,ndarray) else idx[0].shape[0] if isinstance(idx[0],ndarray) else -1
 
     def save(self,h5):
+        """Save the content in 'h5' group.
+
+
+        Parameters
+        ----------
+        h5 : H5Node
+            a node to store the content
+
+        """
         h5['data'] =  self.data
         h5['fields'] =  self.fields
 
@@ -417,7 +473,14 @@ class Equ(Binary):
         super(Equ, self).__init__(eq,*args)
 
 class Variable(object):
-    """Used to build and predicate instance."""
+    """Factory object to build an predicate instances.
+
+    Parameters
+    ----------
+    field : string
+        a name of the variable
+
+    """
     def __init__(self, field):
         self.field = field
     def __lt__(self,other):

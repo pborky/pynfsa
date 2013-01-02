@@ -267,33 +267,28 @@ def get_models(opt, h5= None):
         selected = datasets.values()
 
     steps = {
-        'Scaler': fapply( Scaler ),
+        #'Scaler': fapply( Scaler ),
         'Bands': fapply( FreqBands, 2,5,10 ),
-        'BandsLg': fapply( FreqBands, 2,5,10, log_scale=True ),
+        #'BandsLg': fapply( FreqBands, 2,5,10, log_scale=True ),
         'Threshold': fapply( FreqThresh, 0 ),
-        'MomentumMVKS': fapply( Momentum, 'mvks'),
-        'GMM' : fapply( GMM, 1, 5, covariance_type='diag', n_iter=40 ),
+        'Momentum': fapply( Momentum, 'vks'),
+        #'GMM' : fapply( GMM, 1, 5, covariance_type='diag', n_iter=40 ),
         'DPGMM' : fapply( DPGMM, covariance_type='diag', n_iter=40 ),
         'Mahal': fapply( Mahalanobis, False ),
-        'PCA': fapply( PCA, 0.99 ),
-        'PCAw': fapply( PCA, 3, 10 , whiten=True )
+        'PCA': fapply( PCA, 1, 3 ),
+        'PCA2': fapply( PCA  ),
+        #'PCAw': fapply( PCA, 3, 10 , whiten=True )
     }
-    computations = [
-        ('Bands', 'DPGMM'),
+    if not opt.computations : opt.computations = [
+        #('Bands', 'DPGMM'),
+        ('Bands', 'Mahal'),
         #('BandsLg', 'DPGMM'),
-        #('Bands','DPGMM'),
-        #('Bands', 'Mahal'),
-        ('Threshold','DPGMM'),
-        #('Threshold','Scaler','DPGMM'),
-        #('Threshold', 'Scaler','Mahal'),
+        #('Threshold','DPGMM'),
         #('Threshold', 'Mahal'),
-        #('Threshold', 'DPGMM'),
-        ('Threshold','MomentumMVKS', 'Mahal' ),
-        #('Threshold','MomentumMVKS', 'Scaler', 'Mahal' ),
-        ('Threshold','MomentumMVKS',  'DPGMM' ),
-        #('Threshold','PCA', 'Scaler', 'Mahal' ),
-        #('Threshold', 'PCA', 'Mahal' ),
-        ('Threshold', 'PCA', 'DPGMM' ),
+        ('Threshold','Momentum', 'Mahal' ),
+        #('Threshold','MomentumMVKS',  'DPGMM' ),
+        ('Threshold', 'PCA', 'Mahal' ),
+        #('Threshold', 'PCA', 'DPGMM' ),
         #('Threshold', 'PCAw', 'DPGMM' )
     ]
 
@@ -315,7 +310,7 @@ def get_models(opt, h5= None):
         legit = splitToInts(opt.legit) if opt.legit is not None else None
         malicious = splitToInts(opt.malicious) if opt.malicious is not None else None
 
-        m,((fit, binarize, classes), res) = evaluate(opt, computations, sampl,steps=steps,model=model,legit=legit,malicious=malicious)
+        m,((fit, binarize, classes), res) = evaluate(opt, None, sampl,steps=steps,model=model,legit=legit,malicious=malicious)
         plot_roc(res,'ROC curves')
 
         if opt.tex:
@@ -326,7 +321,7 @@ def get_models(opt, h5= None):
 \begin{table}[h]
     \begin{center}
         \begin{tabular}{c|cc}
-            Method & \overline{\mu_{auc}} & \overline{\sigma_{auc}} \\ \hline
+            Method & $\overline{\mu_{auc}}$ & $\overline{\sigma_{auc}}$ \\ \hline
 
 %s
 
@@ -409,191 +404,3 @@ if __name__=='__main__':
     elif opt.action == 'model':
 
         H5Node(opt).handle_exit(get_models)
-
-    elif None:
-        #TODO -> model.py
-        from models import freq_treshold,freq_bands,freq_momentum,freq_sdev,freq_low_hi,pca,Scaler,gmm,pipeline,FitError,mahal
-        h5 = H5Node(opt)
-
-        def fapply(fnc, *args):
-            from functional import partial
-            if len(args):
-                return [ (fnc(a),a) for a in args ]
-            else:
-                return (fnc(),None),
-
-        def iterate( *args):
-            from itertools import product
-            return [( ','.join('%s(%s)'%(c.__name__,str(a)) for c,a in cmds) , pipeline(*[c for c,a in cmds])) for cmds in product(args)]
-
-        def crossval(method, X, y, freqs, folds = 10):
-            from sklearn.cross_validation import StratifiedKFold
-            s = []
-            d = []
-            for train, test in StratifiedKFold(y.squeeze(), folds, indices=False):
-                try:
-                    method.fit(X[train,...],y[...,train],freqs)
-                    (score,data),dummy,dummy = method.score(X[test,...], y[...,test], freqs)
-                    s += score,
-                    d += data,
-                except FitError:
-                    s+=-np.inf,
-            return np.array(s),d
-        try:
-            methods = {}
-            #methods.update(iterate( 'bands', ( freq_treshold, (0,)) , ( freq_bands, (2,5,10,25))  , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_bands, 5, 10 ) ,  fapply( mahal, 0 ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) ,  fapply( mahal, 0 ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_bands, 2,10 )  ,  fapply( gmm, 5, ) ))
-            #methods.update(iterate( 'sdev', ( freq_treshold, (0,)) , ( freq_sdev, (0,)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_momentum, 14 ) , fapply( Scaler ) ,  fapply( gmm, 1 ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( freq_momentum, 14 )  ,  fapply( mahal, 1 ) ))
-            #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5,10,20,40)) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            methods.update(iterate( fapply( freq_treshold, 0 ) , fapply( pca, 5 ) , fapply( Scaler ) ,  fapply( gmm, 1 ) ))
-            #methods.update(iterate( 'lowhi', ( freq_treshold, (0,)) ,( freq_low_hi, (5e-6,6e-5,1.1e-4,1.6e-4,2.2e-4, 2.7e-4, 3.2e-4, 3.8e-4, 4.4e-4, 5e-5 )) , ( scale, (True,)) ,  ( gmm, (1,) ) ))
-            samples = h5['samples']
-
-            print(colorize(boldblue,green) * '#datasets found in database# %s:' %opt.database)
-            datasets = []
-            i = 0
-            for k in samples.keys():
-                if not k.startswith('data'):
-                    continue
-                sampl = samples[k]
-
-                if  '.srate' not in sampl or  '.wndsize' not in sampl :
-                    continue
-
-                srate = scalar(sampl['.srate'])
-                wndsize = scalar(sampl['.wndsize'])
-
-                if srate not in opt.srate or wndsize not in opt.window:
-                    continue
-
-                print(colorize(boldyellow,green) * '[%d] %s : (srate=%f, wndsize=%d)'%(i,k,srate,wndsize))
-
-                datasets.append((i,(k,sampl,srate,wndsize)))
-                i+=1
-            datasets = dict(datasets)
-
-            if len(datasets)>1:
-                selected = []
-                while not selected:
-                    s = raw_input('datasets to use:')
-                    selected = [datasets[int(i.strip())] for i in s.split(',')]
-            else:
-                selected = datasets.values()
-
-            for k,sampl,srate,wndsize in selected:
-            #for k in samples.keys():
-                try:
-                    #if not k.startswith('data'):
-                    #    continue
-                    #sampl = samples[k]
-
-                    #srate = sampl['.srate'].value
-                    #wndsize = sampl['.wndsize'].value
-
-                    #if srate not in opt.srate or wndsize not in opt.window:
-                    #    continue
-
-                    print('## processing %s'%k)
-
-                    X = sampl['X'][:]
-                    y = sampl['y'][:]
-                    freqs = sampl['freqs'][:]
-
-                    id3 = sampl['flowids']
-
-                    labeling,labeling2,labeling3 = get_labeling(opt,id3)
-
-                    y =  np.array([[labeling.get(f) if f in labeling else 0 for f in y.squeeze()]])
-                    print('## please hold on')
-
-                    f = []
-                    n = []
-                    scores = []
-                    results = []
-                    for p,meth in methods.items():
-                        s,d = crossval(meth, X, y, freqs)
-                        results.append('\t%s: score (mean=%f, std=%f)' % (','.join('%s(%d)'%n for n in p), s.mean(), s.std()))
-                        f += d[0],
-                        n += 'srate=%f, %s' % (srate,'%s(%d)' % p[1]),
-                        scores += s,
-                    print('srate=%fHz, wndsize=%dsamps'%(srate,wndsize))
-                    print('\n'.join(results))
-                    def plotline(x,y):
-                        return lambda ax: ax.plot(x, y, '-')
-                    fig(list(plotline(fpr, tpr) for fpr, tpr, t in f),name=n,show=True)
-                except Exception as e:
-                    print(e)
-                    raise
-        finally:
-            pass
-            #h5.close()
-    elif None:
-        #TODO -> model.py
-        from dataset import Variable,Table
-        from scipy.fftpack import fftfreq,fft
-        from sys import stdout
-
-        flow = Variable('flow')
-        src = Variable('src')
-        dst = Variable('dst')
-        dport = Variable('dport')
-        sport = Variable('sport')
-
-        h5 = File(opt.database,'a')
-
-        if len(argv)>3:
-        #for grp in (k for k in h5.keys() if k.startswith('samples_')):
-        #for i in (100,200,500,1000,2000):
-            grp = argv[3]
-            #if grp not in h5:
-            #    exit() # continue
-
-            sampl = h5[grp]
-
-            srate = sampl['.srate'].value
-            wndsize = sampl['.wndsize'].value
-
-            X = sampl['X'].value
-            y = sampl['y'].value
-            freqs = sampl['freqs'].value
-
-            id3 = Table(data=sampl['id'].value,fields=sampl['idfields'].value)
-            labeling,labeling2 = get_labeling(id3)
-            labels = np.array([[labeling.get(f) for f in y.squeeze()]]) # annotations
-
-            def pcatransform(ndim=2):
-                from sklearn.decomposition import PCA
-                t = PCA(ndim)
-                def fnc(X):
-                    t.fit(X[labels.squeeze()==1,...])
-                    return t.transform(X)
-                return fnc
-            def lowhitransform(srate, wndsize, fthresh=50):
-                from scipy.fftpack import fftfreq
-                freqs = fftfreq(wndsize-1,d=1./srate)
-                return lambda X: np.vstack((X[...,freqs<=fthresh].sum(1),X[...,freqs>fthresh].sum(1))).transpose()
-            def varnorm(X):
-                return (X - X.mean(0).reshape((1,X.shape[1])) )/X.std(0).reshape((1,X.shape[1]))
-            def logistnorm(X):
-                from scipy.special import expit
-                return expit(varnorm(X))
-            def scatter1(ax):
-                return scatter(ax, X, labels, varnorm, pcatransform(ndim=2), labeling2.get)
-            def scatter1a(ax):
-                return scatter(ax, X, labels, varnorm, pcatransform(ndim=2), labeling2.get)
-            def scatter1b(ax):
-                return scatter(ax, X, labels, logistnorm, pcatransform(ndim=2), labeling2.get)
-            def scatter2a(ax):
-                return scatter(ax, X, labels, None, lowhitransform(srate,wndsize,fthresh=10), labeling2.get)
-            def scatter2b(ax):
-                return scatter(ax, X, labels, varnorm, lowhitransform(srate,wndsize,fthresh=10), labeling2.get)
-                #fignames =  'spectral features (srate=%dHz, wnd=%ds), %%s, %%s' %(srate,wndsize/srate)
-            #fignames = [fignames%('variance normalization','2D pca projection'),fignames%('logistic normalization','2D pca projection')]
-            #fig([scatter1a,scatter1b], fignames,show=True)
-            #fignames =  'spectral features (srate=%dHz, wnd=%fs), %%s, %%s' %(srate,1.*wndsize/srate)
-            #fignames = [fignames%('no normalization','low-pass/hi-pass energy'),fignames%('variance normalization','low-pass/hi-pass energy')]
-            fig(scatter1,show=True)

@@ -3,14 +3,28 @@
 from util import *
 
 class Extractor(object):
-    """Used for extraction of various attributes of raw data. """
+    """Used for extraction of various attributes of raw data.
+
+    Parameters
+    ----------
+    fields : tuple
+        a tuple of fields to be extracted from source data
+
+    """
     def __init__(self, fields):
-        """construct Extrator callable that return fields."""
         self.fields = tuple(fields)
 
 class PcapExtractor(Extractor):
     """Used for extraction of attributes from PCAP data. """
     def __call__(self, pkt):
+        """Extract attributes from packet
+
+        Parameters
+        ----------
+        pkt : util.PacketWrapper
+            A packet obtained by util.get_packet
+
+        """
         from impacket.ImpactPacket import IP,TCP,UDP,ICMP,Data
         from util import ip2int,int2ip
 
@@ -85,7 +99,16 @@ class TraceExtractor(Extractor):
         return tuple(result[f] for f in  self.fields)
 
 class FlowExtractor(Extractor):
-    """Used for extraction of attributes from netflow data. """
+    """Used for extraction of attributes from netflow data.
+
+    Parameters
+    ----------
+    fields : tuple
+        a tuple of fields to be extracted from source data
+    pattern : re.Pattern
+        a pattern to use instead for predefined one.
+
+    """
     def __init__(self, fields, pattern=None):
         super(FlowExtractor, self).__init__(fields)
         if pattern:
@@ -131,7 +154,13 @@ class FlowExtractor(Extractor):
         """Convert duration to int in microsecond."""
         return int(float(duration)*1e6)
     def __call__(self, line):
-        """Invoke extrat on one line returning field containting tuple of fields.
+        """Extract attributes from flow
+
+        Parameters
+        ----------
+        line : string
+            A line in netflow file
+
         """
         from util import ip2int,int2ip
         try:

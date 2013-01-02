@@ -1,12 +1,43 @@
+"""Module containing classes for constructina and evaluating models.
+"""
 
 from __future__ import print_function
 from util import *
 
 import numpy as np
 import scipy.stats as st
-from functional import *
 
 def evaluate(opt, computations, h5grp, model=None, legit=None, malicious=None, model_legit=None,steps=None):
+    """Evaluate given computations on dataset h5grp.
+    Choose model instances based on labels 'model', evaluation sample is defined 'malicious' and 'legit'.
+    If specified 'steps' determine coputation steps.
+
+    Parameters
+    ----------
+    opt : argparse.Namespace
+        Arguements passed in command line.
+    computations : iterable
+        Each item defines an computation. Computation is defined by list of keys to steps argument.
+    h5grp : pynfsa.dataset.H5Node
+        Group in which sample is present.
+    model : list
+        list of integer labels to be included in model
+    malicious : list
+        list of integer labels to be included in positive instances
+    legit : list
+        list of integer labels to be included in negative instances
+    model_legit : boolean
+        determine if model is normal or anomalous
+    steps : dictionary
+        Step of the computation. Steps are iterables that can be variants of same method.
+
+    Returns
+    -------
+    modeler : Modeler
+        modeler instance
+    results : tuple
+        result of modeler invocation
+    """
     m = Modeler(opt,computations,steps=steps)
     if 'annot' not in h5grp:
         raise Exception('expecting annotated dataset')
@@ -14,21 +45,32 @@ def evaluate(opt, computations, h5grp, model=None, legit=None, malicious=None, m
     return m,m(fit=fit, binarize=binarize, h5grp=h5grp)
 
 def plot_roc(res, title=''):
+    """Given a modeler result plot an ROC curves
+
+    Parameters
+    ----------
+    res : list
+        list of tuples: (name, auc, (fpr, tpf, threshold))
+    title : string
+        Title of the figure
+    """
     from matplotlib.pylab import plt
     from math import ceil
     from functional import add
-    colors = [ 'r-','g-', 'b-', 'c-', 'm-', 'rx-','gx-', 'bx-', 'cx-', 'mx-', 'ro-','go-', 'bo-', 'co-', 'mo-', 'r.', 'g.', 'b.', 'c.', 'm.'   ]
+    colors = [ 'r-','g-', 'b-', 'c-', 'm-','y-', 'rx-','gx-', 'bx-', 'cx-', 'mx-', 'ro-','go-', 'bo-', 'co-', 'mo-', 'r.', 'g.', 'b.', 'c.', 'm.'   ]
     colors*=int(1+ceil(20 / len(colors) ))
     idx = list( np.argsort([np.mean(auc) for _, auc, _ in res]) )
     values = reduce(add,( [fpr,tpr,colors.pop(0)] for fpr, tpr, thr in (d[0] for _, _, d in (res[i] for i in reversed(idx))) ),[])
     names =  list( u'%s [auc=%.2f\u00b1%.2f]'%(n,np.mean(auc),np.std(auc)) for n, auc, _ in (res[i] for i in reversed(idx)) )
-    plt.subplots_adjust(left=.05, bottom=.05, right=.95, top=.95, wspace=.4, hspace=.4)
+    plt.subplots_adjust(left=.1, bottom=.1, right=.90, top=.90, wspace=.4, hspace=.4)
     ax1 = plt.subplot2grid((5,1), (1, 0), rowspan=4)
     ax2 = plt.subplot2grid((5,1), (0, 0),frameon=False,xticks=[],yticks=[])
     ln = ax1.plot( *values )
     ax1.fill_between( [0,1],[0,0],[0,1],facecolor='red',alpha=0.15 )
     ax1.set_xlabel('false positive rate')
     ax1.set_ylabel('true positive rate')
+    ax1.set_xlim((0,1))
+    ax1.set_ylim((0,1))
     ax2.legend(ln, names, loc=10, ncol = 1, mode='expand', prop={'size': 10})
     plt.show()
 
@@ -38,6 +80,18 @@ def fapply(fnc, *args, **kwargs):
     Applies function to each positional argument and returns list of result.
     If the particular arguemtn is iterable, it is ufloded before in invocation.
     Keyword arguments are passed in all invocations.
+
+    Parameters
+    ----------
+    fnc : callable
+        function to invoke:
+        [fnc(arg,**kwargs) for arg in args ]
+
+    Returns
+    -------
+    results : list of function applcation results
+        Basically somthing like
+        [fnc(arg,**kwargs) for arg in args ]
 
     """
     kwstr = ['%s=%s'%i for i in  kwargs.iteritems()]
@@ -89,7 +143,7 @@ class Modeler(object):
             'PCAw': fapply( PCA, 3, 10 , whiten=True )
         }
         computations = opt.computations if opt.computations else [
-            ('Bands','GMM'),
+            ('Bands','DPGMM'),
             ('Bands','Mahal'),
             ('Threshold','Mahal'),
             ('Threshold','MomentumMVKS', 'Mahal' ),
@@ -347,16 +401,16 @@ class LinearTransformer(BaseEstimator, TransformerMixin):
         return np.dot(X,self.A)
 
 class FreqBaseTransformer(LinearTransformer):
+    """Base class for frequency based transformations.
+    The transformation matrix A is computed according to
+    frequency vector with function `get_A` (that must be
+    overriden in child classes).
+    """
     def __init__(self):
-        """Base class for frequency based transformations.
-            The transformation matrix A is computed according to
-            frequency vector in function `get_A` that must be
-            overriden in child classes.
-        """
         super(FreqBaseTransformer, self).__init__(self._get_A)
     def _get_A(self, X, freqs=None, **params):
-        """Returns transforamtion matrix based on impelentation
-            of the `get_A`. This is internal class.
+        """#Returns transforamtion matrix based on impelentation
+           #of the `get_A`. This is internal class.
         """
         A = self.get_A(X,freqs)
         return A
@@ -376,8 +430,10 @@ class FreqThresh(FreqBaseTransformer):
 
     Parameters
     ----------
-    f_thresh : number , lower threshold
-    f_thresh_hi : number , upper threshold
+    f_thresh : number
+        lower threshold
+    f_thresh_hi : number (optional)
+        upper threshold
 
     """
     def __init__(self,f_thresh, f_thresh_hi=None):
@@ -403,8 +459,10 @@ class FreqBands(FreqBaseTransformer):
 
     Parameters
     ----------
-    n_bands : number of bands
-    log_scale : boolean, if true logarithic scale instead of linear is used,
+    n_bands : number
+        count of bands
+    log_scale : boolean
+        if true logarithic scale instead of linear is used,
                 default: False
 
     """
@@ -430,7 +488,7 @@ class FreqBands(FreqBaseTransformer):
         return A
 
 class Momentum(BaseEstimator, TransformerMixin):
-    """ Computation of the moments of an data instance result in
+    """Computation of the moments of an data instance result in
     features in new feature space where each dimension is dedicated
     to particular moment.
 
@@ -527,6 +585,9 @@ class Mahalanobis (BaseEstimator):
 from sklearn.pipeline import Pipeline
 
 class  PipelineFixd (Pipeline):
+    """Fixed version of Pipeline. Original has some bugs.
+
+    """
     def _pre_transform(self, X, y=None, **fit_params):
         fit_params_steps = dict((step, {}) for step, _ in self.steps)
         for pname, pval in fit_params.iteritems():
@@ -563,159 +624,3 @@ class  PipelineFixd (Pipeline):
         for name, transform in self.steps[:-1]:
             Xt = transform.transform(Xt)
         return self.steps[-1][-1].score(Xt)
-
-class base:
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-    def _process(self, X, y, freqs):
-        return X, y, freqs
-    def fit(self, X, y, freqs):
-        return self._process(X, y, freqs)
-    def score(self,X,y, freqs):
-        return self._process(X, y, freqs)
-class scale(base):
-    def __init__(self, mean=True, std=True, **kwargs):
-        base.__init__(self, mean=mean, std=std, **kwargs)
-        self.scaler = None
-    def fit(self, X, y, freqs):
-        from sklearn.preprocessing import Scaler
-        self.scaler = Scaler(with_mean=self.mean,with_std=self.std,copy=True)
-        self.scaler.fit(X[y.squeeze()<0,...])
-        return self.scaler.transform(X),y,freqs
-    def score(self,X,y, freqs):
-        return self.scaler.transform(X),y,freqs
-class freq_treshold(base):
-    def __init__(self, f_thresh,  **kwargs):
-        base.__init__(self, f_thresh=f_thresh, **kwargs)
-    def _process(self, X, y, freqs):
-        import numpy as np
-        i = freqs.squeeze()>self.f_thresh
-        return X[...,i],y,freqs[...,i]
-class freq_bands(base):
-    def __init__(self, n_bands, **kwargs):
-        base.__init__(self, n_bands=n_bands, **kwargs)
-    def _process(self, X, y, freqs):
-        import numpy as np
-        n_samples = X.shape[0]
-        bands = np.linspace(freqs.min(),freqs.max(),num=self.n_bands+1, endpoint=True)[np.newaxis,...]
-        Xm = X[...,np.newaxis].repeat(self.n_bands,2)
-        mask = (((bands[...,:-1]<=freqs[...,np.newaxis]) & (bands[...,1:]>=freqs[...,np.newaxis])))[np.newaxis,...].repeat(n_samples,0)
-        return (Xm * mask).sum(1), y, bands
-class freq_low_hi(base):
-    def __init__(self, f_thresh, **kwargs):
-        base.__init__(self, f_thresh=f_thresh, **kwargs)
-    def _process(self, X, y, freqs):
-        import numpy as np
-        n_samples = X.shape[0]
-        Xm = X[...,np.newaxis].repeat(2,2)
-        mask = np.hstack((freqs[...,np.newaxis] > self.f_thresh,freqs[...,np.newaxis] <= self.f_thresh))[np.newaxis,...].repeat(n_samples,0)
-        #mask = (((bands[...,:-1]<=freqs[...,np.newaxis]) & (bands[...,1:]>=freqs[...,np.newaxis])))[np.newaxis,...].repeat(n_samples,0)
-        return (Xm * mask).sum(1), y, None
-class freq_sdev(base):
-    def __init__(self, dummy, **kwargs):
-        base.__init__(self, **kwargs)
-    def _process(self, X, y, freqs):
-        return np.std(X, axis=1), y, None
-class freq_momentum(base):
-    def __init__(self, moment, **kwargs):
-        from scipy.stats import skew,kurtosis
-        import numpy as np
-        if not isSequenceType(moment):
-            moment=tuple(int(i) for i in reversed(bin(moment)[2:]))
-        else:
-            moment = tuple(moment)
-        base.__init__(self, moment=moment, **kwargs)
-        self.methods = (np.mean,np.std, skew, kurtosis)
-    def _process(self, X, y, freqs):
-        import numpy as np
-        meth = filter(None,((self.methods[i] if self.moment[i] and i < len(self.moment) else None) for i in range(len(self.methods))))
-        return np.hstack(tuple(m(X,axis=1)[...,np.newaxis] for m in meth)), y, None
-class pca(base):
-    def __init__(self, ndim, **kwargs):
-        base.__init__(self, ndim=ndim, **kwargs)
-        self.pca = None
-    def fit(self, X, y, freqs):
-        from sklearn.decomposition import PCA
-        from scipy.linalg import LinAlgError
-        self.pca = PCA(self.ndim)
-        try:self.pca.fit(X[y.squeeze()<0,...])
-        except LinAlgError: raise FitError()
-        return self.pca.transform(X),y,freqs
-    def score(self,X,y, freqs):
-        return self.pca.transform(X),y,freqs
-class mahal(base):
-    def __init__(self, lbl, **kwargs):
-        from sklearn.mixture import DPGMM as GMM
-        from sklearn.covariance import EmpiricalCovariance, MinCovDet
-        base.__init__(self, lbl=lbl, **kwargs)
-        #self.model = EmpiricalCovariance()
-        #self.model = GMM(1, covariance_type='diag', n_iter=100, params='wmc', init_params='wmc')
-    def _labeling(self, X, y, freqs):
-        import numpy as np
-        y = np.copy(y).squeeze()
-        model = np.abs([i for i in np.unique(y) if i < 0 and i is not None])
-        i = np.abs(y.squeeze())==model
-        j = ~i & (y.squeeze()!=0)
-        y[...,i] = 1
-        y[...,j] = -1
-        return X, y, freqs
-    def fit(self, X, y, freqs):
-        from sklearn.covariance import EmpiricalCovariance, MinCovDet
-        X, y, freqs = self._labeling(X, y, freqs)
-        self.model = EmpiricalCovariance()
-        X = X[y.squeeze() == 1,...]
-        self.cov = self.model.fit(X)
-        #print 'model size : %s'  % str(self.model.means_.shape)
-        return X,y,freqs
-    def score(self,X,y, freqs):
-        from sklearn.metrics import roc_curve,auc
-        X, y, freqs = self._labeling(X, y, freqs)
-        #score_raw = self.model.score(X[y.squeeze()!=0,...])
-        #score_raw = self.model.mahalanobis(X[y!=0,...]-X[y!=0,...].mean())
-        score_raw = self.model.mahalanobis(X[y.squeeze()!=0,...] - self.cov.location_) ** 0.33
-        fpr, tpr, thresholds = roc_curve(y[y.squeeze()!=0,...].squeeze(), score_raw)
-        return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
-class gmm(base):
-    def __init__(self, n_dim, **kwargs):
-        from sklearn.mixture import DPGMM as GMM
-        base.__init__(self, n_dim=n_dim, **kwargs)
-        #self.model = GMM(4, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
-    def _labeling(self, X, y, freqs):
-        import numpy as np
-        y = np.copy(y).squeeze()
-        model = np.abs([i for i in np.unique(y) if i < 0 and i is not None])
-        i = (y.squeeze()==model) | (y.squeeze()==-model)
-        j = ~i & (y.squeeze()!=0)
-        y[...,i] = 1
-        y[...,j] = -1
-        return X, y, freqs
-    def fit(self, X, y, freqs):
-        from sklearn.mixture import DPGMM as GMM
-        X, y, freqs = self._labeling(X, y, freqs)
-        self.model = GMM(self.n_dim, covariance_type='full', n_iter=100, params='wmc', init_params='wmc')
-        self.model.fit(X[y.squeeze() == 1,...])
-        #print 'model size : %s'  % str(self.model.means_.shape)
-        return X,y,freqs
-    def score(self,X,y, freqs):
-        from sklearn.metrics import roc_curve,auc
-        X, y, freqs = self._labeling(X, y, freqs)
-        score_raw = self.model.score(X[y.squeeze()!=0,...])
-        fpr, tpr, thresholds = roc_curve(y[y.squeeze()!=0,...].squeeze(), score_raw)
-        return (auc(fpr, tpr), (fpr, tpr,thresholds)),y,freqs
-class pipeline(base):
-    def __init__(self, *args, **kwargs):
-        base.__init__(self,**kwargs)
-        self.callables = args
-    def _process(self,X,y,freqs,**kwargs):
-        callables = kwargs.get('callables') if 'callables' in kwargs else self.callables
-        for c in callables:
-            X, y, freqs = c.fit(X, y, freqs)
-        return X, y, freqs
-    def fit(self, X, y, freqs):
-        for c in self.callables:
-            X, y, freqs = c.fit(X, y, freqs)
-        return X, y, freqs
-    def score(self, X, y, freqs):
-        for c in self.callables:
-            X, y, freqs = c.score(X, y, freqs)
-        return X, y, freqs
